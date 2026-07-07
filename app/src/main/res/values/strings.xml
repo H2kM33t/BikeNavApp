@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BikeNav</string>
+    <string name="splash_tagline">Your ride. Your data. Your display.</string>
+
+    <string name="permissions_title">Setup Required</string>
+    <string name="permissions_subtitle">Just a few steps to get started</string>
+    <string name="permission_notif_title">Notification Access</string>
+    <string name="permission_notif_desc">To read Maps directions</string>
+    <string name="permission_access_title">Accessibility Service</string>
+    <string name="permission_access_desc">To read directions when screen is off</string>
+    <string name="permission_granted">Granted</string>
+    <string name="permission_enable">Enable</string>
+    <string name="permissions_continue">Continue</string>
+
+    <string name="bluetooth_title">Connect to Your Bike</string>
+    <string name="bluetooth_scan">Scan for devices</string>
+    <string name="bluetooth_scanning">Scanning…</string>
+    <string name="bluetooth_no_devices">No devices found. Make sure it\'s powered on.</string>
+
+    <string name="dashboard_title">Dashboard</string>
+    <string name="dashboard_reconnect">Reconnect</string>
+    <string name="dashboard_scan">Scan</string>
+    <string name="dashboard_auto_reconnect">Auto-reconnect</string>
+    
+    <string name="status_connected_to">Connected to %1$s</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_paired">Paired with %1$s</string>
+    <string name="status_disconnected">Not connected</string>
+</resources>

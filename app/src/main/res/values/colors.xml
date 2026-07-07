@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="success">#00E5A0</color>
+    <color name="warning">#FFB000</color>
+    <color name="scanning">#00C0FF</color>
+    
+    <!-- Gradient for cards -->
+    <color name="card_gradient_start">#151518</color>
+    <color name="card_gradient_end">#1E1E23</color>
+
+    <color name="transparent">#00000000</color>
+</resources>
