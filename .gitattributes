@@ -10,3 +10,6 @@
 # Ensure shell scripts have LF endings to avoid execution issues
 *.sh text eol=lf
 *.bat text eol=crlf
+
+# Tell GitHub to ignore these folders for language statistics
+app/src/main/res/* linguist-documentation
