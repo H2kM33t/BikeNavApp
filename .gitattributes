@@ -1,15 +1,6 @@
-# Set default behavior to automatically normalize line endings
 * text=auto
-
-# Explicitly set file types for correct language detection on GitHub
-*.xml linguist-language=XML
-*.gradle linguist-language=Groovy
+*.kt linguist-language=Kotlin
 *.kts linguist-language=Kotlin
-*.pro linguist-language=Properties
-
-# Ensure shell scripts have LF endings to avoid execution issues
-*.sh text eol=lf
-*.bat text eol=crlf
-
-# Tell GitHub to ignore these folders for language statistics
-app/src/main/res/* linguist-documentation
+/build/** linguist-generated=true
+/.gradle/** linguist-generated=true
+/.idea/** linguist-generated=true
