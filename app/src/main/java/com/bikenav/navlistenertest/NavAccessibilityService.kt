@@ -19,6 +19,10 @@ class NavAccessibilityService : AccessibilityService() {
     // "X km remaining", or a bare "X km, Y min" ETA string — and also
     // imperial units.
     private val remainingRegex = Regex("""(\d+\.?\d*)\s*(km|m|mi|ft)\s*(?:left|remaining|,)""", RegexOption.IGNORE_CASE)
+    // Matches Maps' "take the 2nd exit" / "3rd exit" style phrasing at
+    // roundabouts — this is real data Maps already provides, just not
+    // previously forwarded to the display.
+    private val exitNumberRegex = Regex("""(\d+)(?:st|nd|rd|th)\s+exit""", RegexOption.IGNORE_CASE)
 
     // Converts a parsed (value, unit) pair to metres. Centralizing this
     // means m/km/ft/mi are all handled consistently everywhere distance
@@ -36,6 +40,20 @@ class NavAccessibilityService : AccessibilityService() {
     private val instructionSuffixRegex = Regex("""\s+in \d+\.?\d*\s*(m|km|ft|mi)$""", RegexOption.IGNORE_CASE)
     private var lastSent = ""
     private var lastPayload: ByteArray? = null
+
+    // ---- Interlock against stale/glitchy single-frame reads ----
+    // A stale/off-screen node can momentarily win candidate selection and
+    // look like a legitimate turn change (this is what caused "shows a
+    // turn I already passed"). A NEW instruction is only accepted
+    // immediately if it matches what the PREVIOUS event's "Then ..."
+    // preview predicted (i.e. it's corroborated in advance by Maps
+    // itself — not extra data, just cross-checking what Maps already
+    // showed). Otherwise it must repeat identically on two consecutive
+    // events before being trusted. Adds at most one throttle cycle
+    // (~600ms) of latency on a genuinely new turn.
+    private var pendingThenTurn: Int? = null
+    private var unconfirmedCore: String? = null
+    private var lastAcceptedCore: String = ""
     private val heartbeatHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val HEARTBEAT_INTERVAL_MS = 5000L  // resend even if unchanged, still well under ESP32's 8s stale timeout
 
@@ -139,6 +157,10 @@ class NavAccessibilityService : AccessibilityService() {
             remainingRegex.containsMatchIn(it)
         }
 
+        // "Then ..." preview, if present this pass — used by the interlock
+        // below to corroborate the NEXT instruction change before trusting it.
+        val thenNode = allText.firstOrNull { it.trim().startsWith("then ", ignoreCase = true) }
+
         if (instructionNode == null) return
 
         // Parse distance to next turn
@@ -165,15 +187,73 @@ class NavAccessibilityService : AccessibilityService() {
             .replace(instructionSuffixRegex, "")
             .trim()
 
+        // ---- Interlock gate ----
+        // "core" ignores distance (which naturally changes every event) and
+        // only tracks turn+instruction — i.e. did the actual maneuver change.
+        val core = "$turn|$instruction"
+        val thenTurn = thenNode?.let { parseTurnDirection(it) }
+
+        if (core != lastAcceptedCore) {
+            val corroborated = pendingThenTurn != null && pendingThenTurn == turn
+            val repeated = unconfirmedCore == core
+            if (!corroborated && !repeated) {
+                // Not yet trusted — stash it and wait for confirmation next
+                // pass instead of sending a possibly-stale/glitchy read.
+                unconfirmedCore = core
+                pendingThenTurn = thenTurn
+                NavLog.post("Interlock: deferring uncorroborated change '$instruction' (turn=$turn) pending confirmation")
+                return
+            }
+            // Either corroborated by the previous "Then" preview, or seen
+            // twice in a row — accept it.
+            lastAcceptedCore = core
+            unconfirmedCore = null
+        }
+        pendingThenTurn = thenTurn
+
+        // Roundabout exit angle: Google Maps' spoken/on-screen instruction
+        // often literally says which exit to take (e.g. "take the 2nd
+        // exit"), which is real information Maps is already giving you —
+        // just not previously being forwarded to the display.
+        //
+        // Spaced in 45-degree increments (not 90) — matches how real
+        // roundabout icons represent exits: the 1st exit is a fairly
+        // sharp ~45deg turn, straight-ahead sits around the middle
+        // (~180deg for a 4th exit), and later exits fan out toward
+        // almost a full loop back. A uniform 90deg-per-exit assumption
+        // was too coarse and could never produce 45/135/225/315deg at
+        // all even though the drawing code itself supports any angle.
+        val exitNumberMatch = exitNumberRegex.find(instructionNode)
+        val roundaboutAngleDeg: Int = when {
+            exitNumberMatch != null -> {
+                val exitNum = exitNumberMatch.groupValues[1].toIntOrNull() ?: 4
+                // India (and other left-hand-traffic countries) drive on the
+                // left, so roundabouts circulate CLOCKWISE: as the exit
+                // number increases, each successive exit is further to your
+                // LEFT (1st exit = sharp left), not further right. Sweeping
+                // counterclockwise here (360 - exitNum*45) matches that,
+                // instead of the US/right-hand-traffic convention where a
+                // low exit number is a near-right turn.
+                (360 - (exitNum * 45) % 360) % 360
+            }
+            instructionNode.contains("straight", ignoreCase = true) -> 0
+            instructionNode.contains("left", ignoreCase = true) -> 270
+            instructionNode.contains("right", ignoreCase = true) -> 90
+            else -> 180
+        }
+
         // Build payload matching navigation.h binary format:
         // byte 0   : TurnDir (0-10)
         // byte 1-2 : distance to next turn uint16 big-endian metres
         // byte 3-4 : total journey distance (use remaining as approximation)
         // byte 5-6 : remaining journey distance uint16 big-endian metres
         // byte 7   : speed in km/h (0-255)
-        // byte 8+  : "streetName|towardName" ASCII
+        // byte 8   : roundabout exit angle, 0-255 mapped to 0-360 degrees
+        //            (only meaningful when turn is a roundabout code, but
+        //            always sent for a consistent format)
+        // byte 9+  : "streetName|towardName" ASCII
         val payload = buildBinaryPayload(
-            turn, distanceMetres, remainMetres, remainMetres, speedKmh, instruction
+            turn, distanceMetres, remainMetres, remainMetres, speedKmh, roundaboutAngleDeg, instruction
         )
 
         val payloadStr = payload.joinToString("") { "%02X".format(it) }
@@ -225,10 +305,11 @@ class NavAccessibilityService : AccessibilityService() {
         totalMetres: Int,
         remainMetres: Int,
         speedKmh: Int,
+        roundaboutAngleDeg: Int,
         instruction: String
     ): ByteArray {
         val textBytes = instruction.toByteArray(Charsets.UTF_8).take(60).toByteArray()
-        val buf = ByteArray(8 + textBytes.size)
+        val buf = ByteArray(9 + textBytes.size)
         buf[0] = turn.toByte()
         buf[1] = ((distMetres shr 8) and 0xFF).toByte()
         buf[2] = (distMetres and 0xFF).toByte()
@@ -237,7 +318,11 @@ class NavAccessibilityService : AccessibilityService() {
         buf[5] = ((remainMetres shr 8) and 0xFF).toByte()
         buf[6] = (remainMetres and 0xFF).toByte()
         buf[7] = speedKmh.coerceIn(0, 255).toByte()
-        textBytes.copyInto(buf, 8)
+        // 0-360 degrees packed into a single byte (0-255) — resolution of
+        // ~1.4 degrees, plenty for a roundabout exit icon.
+        val angleByte = ((roundaboutAngleDeg.coerceIn(0, 360) * 255) / 360)
+        buf[8] = angleByte.toByte()
+        textBytes.copyInto(buf, 9)
         return buf
     }
 
