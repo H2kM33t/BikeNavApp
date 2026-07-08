@@ -136,10 +136,28 @@ class NavAccessibilityService : AccessibilityService() {
             "turn", "continue", "head", "keep", "take", "merge", "u-turn",
             "uturn", "roundabout", "exit", "straight", "arrive"
         )
-        val candidates = allText
+        // Maps sometimes renders a SEPARATE landmark-narration node for the
+        // same upcoming point — e.g. "At Baroda Dairy Circle, continue" —
+        // alongside the real maneuver banner ("Slight right onto Kanaiyalal
+        // Munshi Marg"). Both contain a turnVerb ("continue") and land on
+        // nearly the same distance, so unfiltered they compete in the
+        // minByOrNull below and can flip-flop which one "wins" from event
+        // to event — that's what looks like an old turn reappearing.
+        // "At the roundabout"/"At the traffic circle" are legitimate real
+        // instructions and stay allowed; only the "At <named place>,"
+        // landmark-narration shape gets dropped.
+        val landmarkNarrationRegex = Regex(
+            """^at\s+(?!the\s+roundabout|the\s+traffic\s+circle)""",
+            RegexOption.IGNORE_CASE
+        )
+        val candidatesRaw = allText
             .filter { distanceRegex.containsMatchIn(it) }
             .filterNot { it.trim().startsWith("then ", ignoreCase = true) }
             .filter { text -> turnVerbs.any { text.contains(it, ignoreCase = true) } }
+        val nonLandmark = candidatesRaw.filterNot { landmarkNarrationRegex.containsMatchIn(it.trim()) }
+        // Fall back to the unfiltered list only if landmark-filtering would
+        // leave nothing at all — better a landmark line than no candidate.
+        val candidates = if (nonLandmark.isNotEmpty()) nonLandmark else candidatesRaw
         val instructionNode = candidates.minByOrNull { candidate ->
             val m = distanceRegex.find(candidate)
             val value = m?.groupValues?.get(1)?.toFloatOrNull()
@@ -187,30 +205,6 @@ class NavAccessibilityService : AccessibilityService() {
             .replace(instructionSuffixRegex, "")
             .trim()
 
-        // ---- Interlock gate ----
-        // "core" ignores distance (which naturally changes every event) and
-        // only tracks turn+instruction — i.e. did the actual maneuver change.
-        val core = "$turn|$instruction"
-        val thenTurn = thenNode?.let { parseTurnDirection(it) }
-
-        if (core != lastAcceptedCore) {
-            val corroborated = pendingThenTurn != null && pendingThenTurn == turn
-            val repeated = unconfirmedCore == core
-            if (!corroborated && !repeated) {
-                // Not yet trusted — stash it and wait for confirmation next
-                // pass instead of sending a possibly-stale/glitchy read.
-                unconfirmedCore = core
-                pendingThenTurn = thenTurn
-                NavLog.post("Interlock: deferring uncorroborated change '$instruction' (turn=$turn) pending confirmation")
-                return
-            }
-            // Either corroborated by the previous "Then" preview, or seen
-            // twice in a row — accept it.
-            lastAcceptedCore = core
-            unconfirmedCore = null
-        }
-        pendingThenTurn = thenTurn
-
         // Roundabout exit angle: Google Maps' spoken/on-screen instruction
         // often literally says which exit to take (e.g. "take the 2nd
         // exit"), which is real information Maps is already giving you —
@@ -223,6 +217,14 @@ class NavAccessibilityService : AccessibilityService() {
         // almost a full loop back. A uniform 90deg-per-exit assumption
         // was too coarse and could never produce 45/135/225/315deg at
         // all even though the drawing code itself supports any angle.
+        //
+        // Computed BEFORE the interlock gate (and folded into "core" below)
+        // so a glitchy single-frame misread of the exit number — Maps'
+        // node text for exit number can lag/blip independently of the
+        // turn+instruction text — gets the same corroborate-or-repeat
+        // protection as everything else, instead of bypassing the gate
+        // entirely and flashing a wrong direction for one frame before
+        // self-correcting.
         val exitNumberMatch = exitNumberRegex.find(instructionNode)
         val roundaboutAngleDeg: Int = when {
             exitNumberMatch != null -> {
@@ -241,6 +243,35 @@ class NavAccessibilityService : AccessibilityService() {
             instructionNode.contains("right", ignoreCase = true) -> 90
             else -> 180
         }
+
+        // ---- Interlock gate ----
+        // "core" ignores distance (which naturally changes every event) and
+        // tracks turn+instruction+roundaboutAngle — i.e. did the actual
+        // maneuver (including which way a roundabout exit points) change.
+        // Angle is included here so a single glitchy frame that misreads
+        // the exit number gets deferred/corroborated exactly like a
+        // glitchy turn or instruction would, instead of sailing through
+        // unprotected and flashing the wrong direction for one frame.
+        val core = "$turn|$instruction|$roundaboutAngleDeg"
+        val thenTurn = thenNode?.let { parseTurnDirection(it) }
+
+        if (core != lastAcceptedCore) {
+            val corroborated = pendingThenTurn != null && pendingThenTurn == turn
+            val repeated = unconfirmedCore == core
+            if (!corroborated && !repeated) {
+                // Not yet trusted — stash it and wait for confirmation next
+                // pass instead of sending a possibly-stale/glitchy read.
+                unconfirmedCore = core
+                pendingThenTurn = thenTurn
+                NavLog.post("Interlock: deferring uncorroborated change '$instruction' (turn=$turn, angle=$roundaboutAngleDeg) pending confirmation")
+                return
+            }
+            // Either corroborated by the previous "Then" preview, or seen
+            // twice in a row — accept it.
+            lastAcceptedCore = core
+            unconfirmedCore = null
+        }
+        pendingThenTurn = thenTurn
 
         // Build payload matching navigation.h binary format:
         // byte 0   : TurnDir (0-10)
