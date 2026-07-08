@@ -38,8 +38,6 @@ class NavAccessibilityService : AccessibilityService() {
     }
 
     private val instructionSuffixRegex = Regex("""\s+in \d+\.?\d*\s*(m|km|ft|mi)$""", RegexOption.IGNORE_CASE)
-    private var lastSent = ""
-    private var lastPayload: ByteArray? = null
 
     // ---- Interlock against stale/glitchy single-frame reads ----
     // A stale/off-screen node can momentarily win candidate selection and
@@ -54,8 +52,6 @@ class NavAccessibilityService : AccessibilityService() {
     private var pendingThenTurn: Int? = null
     private var unconfirmedCore: String? = null
     private var lastAcceptedCore: String = ""
-    private val heartbeatHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val HEARTBEAT_INTERVAL_MS = 5000L  // resend even if unchanged, still well under ESP32's 8s stale timeout
 
     // Google Maps fires accessibility events very frequently while navigating.
     // Walking the full node tree on every single one burns CPU (and battery)
@@ -65,20 +61,18 @@ class NavAccessibilityService : AccessibilityService() {
     private val EVENT_THROTTLE_MS = 600L
     private var lastEventProcessedAt = 0L
 
-    private val heartbeatRunnable = object : Runnable {
-        override fun run() {
-            lastPayload?.let { BleNavClient.sendNavBytes(it) }
-            heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
-        }
-    }
-
     override fun onServiceConnected() {
         super.onServiceConnected()
-        heartbeatHandler.post(heartbeatRunnable)
+        // NavDataState now owns the single shared heartbeat — previously this
+        // service and NavNotificationListener both ran their own, resending
+        // whichever payload each had last built independently.
+        NavDataState.startHeartbeat()
+        GpsSpeedProvider.start(this)
     }
 
     override fun onDestroy() {
-        heartbeatHandler.removeCallbacks(heartbeatRunnable)
+        NavDataState.stopHeartbeat()
+        GpsSpeedProvider.stop(this)
         super.onDestroy()
     }
 
@@ -272,27 +266,17 @@ class NavAccessibilityService : AccessibilityService() {
         }
         pendingThenTurn = thenTurn
 
-        // Build payload matching navigation.h binary format:
-        // byte 0   : TurnDir (0-10)
-        // byte 1-2 : distance to next turn uint16 big-endian metres
-        // byte 3-4 : total journey distance (use remaining as approximation)
-        // byte 5-6 : remaining journey distance uint16 big-endian metres
-        // byte 7   : speed in km/h (0-255)
-        // byte 8   : roundabout exit angle, 0-255 mapped to 0-360 degrees
-        //            (only meaningful when turn is a roundabout code, but
-        //            always sent for a consistent format)
-        // byte 9+  : "streetName|towardName" ASCII
-        val payload = buildBinaryPayload(
-            turn, distanceMetres, remainMetres, remainMetres, speedKmh, roundaboutAngleDeg, instruction
-        )
-
-        val payloadStr = payload.joinToString("") { "%02X".format(it) }
-        lastPayload = payload  // heartbeat timer will keep resending this even if events stop
-        if (payloadStr == lastSent) return  // debounce — don't log/send twice for identical data
-        lastSent = payloadStr
-
         NavLog.post("NAV -> turn=$turn dist=${distanceMetres}m speed=${speedKmh}kmh remain=${remainMetres}m instruction='$instruction'")
-        BleNavClient.sendNavBytes(payload)
+
+        // Publish to the shared merge point instead of sending BLE directly.
+        // NavDataState decides whether this turn code, an icon-hash
+        // resolution, or the notification listener's own text read wins —
+        // see NavDataState's class doc for the priority order and why this
+        // replaced two independently-racing senders.
+        NavDataState.updateFromAccessibility(
+            turn, distanceMetres, remainMetres, remainMetres, speedKmh,
+            roundaboutAngleDeg, exitNumberMatch != null, instruction
+        )
     }
 
     private fun parseTurnDirection(text: String): Int {
@@ -327,33 +311,6 @@ class NavAccessibilityService : AccessibilityService() {
             leadPhrase.contains("straight") || leadPhrase.contains("head") || leadPhrase.contains("continue") -> 0
             else -> 0
         }
-    }
-
-    private fun buildBinaryPayload(
-        turn: Int,
-        distMetres: Int,
-        totalMetres: Int,
-        remainMetres: Int,
-        speedKmh: Int,
-        roundaboutAngleDeg: Int,
-        instruction: String
-    ): ByteArray {
-        val textBytes = instruction.toByteArray(Charsets.UTF_8).take(60).toByteArray()
-        val buf = ByteArray(9 + textBytes.size)
-        buf[0] = turn.toByte()
-        buf[1] = ((distMetres shr 8) and 0xFF).toByte()
-        buf[2] = (distMetres and 0xFF).toByte()
-        buf[3] = ((totalMetres shr 8) and 0xFF).toByte()
-        buf[4] = (totalMetres and 0xFF).toByte()
-        buf[5] = ((remainMetres shr 8) and 0xFF).toByte()
-        buf[6] = (remainMetres and 0xFF).toByte()
-        buf[7] = speedKmh.coerceIn(0, 255).toByte()
-        // 0-360 degrees packed into a single byte (0-255) — resolution of
-        // ~1.4 degrees, plenty for a roundabout exit icon.
-        val angleByte = ((roundaboutAngleDeg.coerceIn(0, 360) * 255) / 360)
-        buf[8] = angleByte.toByte()
-        textBytes.copyInto(buf, 9)
-        return buf
     }
 
     private fun collectText(node: AccessibilityNodeInfo?, list: MutableList<TextNode>) {

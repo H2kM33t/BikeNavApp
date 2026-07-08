@@ -6,7 +6,6 @@ import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
-import java.io.ByteArrayOutputStream
 
 object NavLog {
     /** Controlled by the "Show debug logs" toggle in Settings (see Prefs.showLogs). */
@@ -109,6 +108,7 @@ class NavNotificationListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
         NavLog.post("=== Listener connected ===")
+        IconLearner.init(applicationContext)
     }
 
     // Matches the leading "<number> <unit>" chunk Google Maps prefixes onto
@@ -194,52 +194,50 @@ class NavNotificationListener : NotificationListenerService() {
             NavLog.post("Skipped: identical to last sent state, not resending")
             return
         }
-
-        val turnCode = maneuver.toFirmwareTurnCode()
-        val packet = buildNavPacket(turnCode, distanceMetres, instruction)
-
-        NavLog.post(
-            "Sending binary -> turnCode=$turnCode distance=${distanceMetres}m " +
-                    "instruction='$instruction' packetLen=${packet.size}"
-        )
-
         lastSentSignature = signature
-        BleNavClient.sendNavBytes(packet)
-    }
 
-    /**
-     * Builds the exact packet format main.cpp expects:
-     *   byte 0    : turn code (0-15)
-     *   byte 1-2  : distance to next turn, uint16 BE (from the notification
-     *               title's leading "<n> m/km" prefix; 0 if it couldn't be
-     *               parsed)
-     *   byte 3-4  : total distance, uint16 BE (unknown -> 0)
-     *   byte 5-6  : remaining distance, uint16 BE (unknown -> 0)
-     *   byte 7    : speed km/h (unknown -> 0)
-     *   byte 8+   : instruction text, ASCII only, truncated to fit the
-     *               firmware's 63-byte text cap (it drops anything longer
-     *               than 8+63).
-     *
-     * Total/remaining distance are still zeroed: notification scraping only
-     * ever exposes the distance to the *next* maneuver, not trip totals.
-     */
-    private fun buildNavPacket(turnCode: Int, distanceMetres: Int, instruction: String): ByteArray {
-        val maxTextBytes = 63
-        var textBytes = instruction.toByteArray(Charsets.US_ASCII)
-        if (textBytes.size > maxTextBytes) {
-            textBytes = textBytes.copyOf(maxTextBytes)
+        // ---- Icon-based classification (see IconExtractor/IconHasher/IconLearner) ----
+        // The instruction text is a guess about phrasing; the icon Maps
+        // actually drew is ground truth for the maneuver. When the text
+        // classifier is confident, teach the learner this icon's hash. On
+        // every notification, resolve the icon hash and let NavDataState
+        // prefer that resolution over both text-based reads.
+        val iconBitmap = IconExtractor.extract(this, sbn)
+        val iconHash = iconBitmap?.let { bmp ->
+            val h = IconHasher.dHash(bmp)
+            bmp.recycle()
+            h
         }
+        val textIsConfident = maneuver != ManeuverType.UNKNOWN
+        if (iconHash != null && textIsConfident) {
+            IconLearner.learn(iconHash, maneuver.toFirmwareTurnCode())
+        }
+        val iconResolvedTurn = iconHash?.let { IconLearner.lookup(it) }
 
-        val out = ByteArrayOutputStream(8 + textBytes.size)
-        out.write(turnCode and 0xFF)
-        out.write((distanceMetres shr 8) and 0xFF)
-        out.write(distanceMetres and 0xFF)
-        // bytes 3-4, 5-6: totalDist / remainDist, unknown -> 0
-        repeat(4) { out.write(0) }
-        // byte 7: speed, unknown -> 0
-        out.write(0)
-        out.write(textBytes)
-        return out.toByteArray()
+        // Roundabout exit angle: teach this icon's hash its exact exit
+        // angle whenever accessibility JUST confidently derived one (an
+        // actual "2nd exit" match, not a generic straight/left/right
+        // fallback guess) — see NavDataState.confidentAngleIfFresh(). Once
+        // learned, this icon's angle is recognized even on a later pass
+        // where the exit-number text isn't in view/isn't matched.
+        val isRoundaboutIcon = maneuver == ManeuverType.ROUNDABOUT_LEFT ||
+            maneuver == ManeuverType.ROUNDABOUT_RIGHT ||
+            maneuver == ManeuverType.EXIT_ROUNDABOUT_LEFT ||
+            maneuver == ManeuverType.EXIT_ROUNDABOUT_RIGHT
+        if (iconHash != null && isRoundaboutIcon) {
+            NavDataState.confidentAngleIfFresh()?.let { angle ->
+                IconLearner.learnAngle(iconHash, angle)
+            }
+        }
+        val iconResolvedAngle = iconHash?.let { IconLearner.lookupAngle(it) }
+        NavDataState.updateIcon(iconResolvedTurn, iconResolvedAngle)
+
+        val turnCode = if (textIsConfident) maneuver.toFirmwareTurnCode() else null
+        NavLog.post(
+            "Notification read -> textTurn=$turnCode iconTurn=$iconResolvedTurn iconAngle=$iconResolvedAngle " +
+                "distance=${distanceMetres}m instruction='$instruction'"
+        )
+        NavDataState.updateFromNotification(turnCode, distanceMetres, instruction)
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
@@ -249,6 +247,7 @@ class NavNotificationListener : NotificationListenerService() {
         val runnable = Runnable {
             NavLog.post("--- Confirmed navigation ended ---")
             lastSentSignature = null
+            NavDataState.reset()
             // No dedicated "cleared" packet in the firmware's format; the
             // display will show "No route data" on its own once STALE_TIMEOUT_MS
             // (8s) passes with no new packet, so nothing needs to be sent here.

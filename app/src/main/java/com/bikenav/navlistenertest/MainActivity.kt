@@ -186,6 +186,23 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         }
+        // On Android 12+, BLUETOOTH_SCAN is declared "neverForLocation", so
+        // granting it does NOT also grant ACCESS_FINE_LOCATION the way it
+        // used to pre-S. GPS speed (GpsSpeedProvider) needs it explicitly,
+        // decoupled from BLE — request it here too if still missing.
+        requestLocationPermissionIfNeeded()
+    }
+
+    fun requestLocationPermissionIfNeeded() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
+                1002
+            )
+        }
     }
 
     fun showDeviceScanDialog() {
