@@ -104,23 +104,27 @@ class NavAccessibilityService : AccessibilityService() {
             top
         } ?: rootInActiveWindow ?: return
 
-        val allText = mutableListOf<String>()
-        collectText(root, allText)
-        if (allText.isEmpty()) return
+        val allNodes = mutableListOf<TextNode>()
+        collectText(root, allNodes)
+        if (allNodes.isEmpty()) return
+        val allText = allNodes.map { it.text }
 
         // Find the main instruction node — contains distance + turn.
         // Google Maps can render more than one matching node at once (e.g. a
-        // preview of the next step), so pick whichever has the SMALLEST
-        // distance — that's always the current maneuver, never a lookahead.
+        // preview of the next step, or the expandable steps list further
+        // down the route), so pick whichever is TOPMOST ON SCREEN — that's
+        // reliably the live turn-by-turn banner. Distance is NOT a safe
+        // signal here: each entry in the steps list carries its own
+        // embedded distance (the length of THAT road segment, not distance
+        // from your current position), so a short future segment several
+        // turns down the route can have a smaller printed number than the
+        // real current instruction and would win a smallest-distance pick.
         //
         // EXCEPT: Maps prefixes genuine lookahead previews with "Then " (e.g.
-        // "Then turn right onto Oak St in 300 ft"), and that preview's
-        // printed distance is often SMALLER than the real current
-        // instruction's distance. Left unfiltered, the min-distance pick
-        // above grabs the "Then ..." line and the ESP32 shows the upcoming
-        // turn early instead of the current one (e.g. "Head west" ->
-        // shows "turn right" immediately). Drop any "Then "-prefixed
-        // candidate before picking the minimum.
+        // "Then turn right onto Oak St in 300 ft") and that preview can
+        // render ABOVE the current instruction, so it's filtered out below
+        // before the topmost pick, rather than being allowed to win on
+        // position.
         // Debug aid: log everything Maps exposed this pass, so you can see
         // exactly what text/phrasing is available (e.g. to tune the speed
         // and remaining-distance regexes above against your actual device).
@@ -129,9 +133,9 @@ class NavAccessibilityService : AccessibilityService() {
         // Only treat a node as a real turn instruction if it both matches
         // the distance pattern AND contains an actual maneuver verb. Without
         // this, a stale/off-screen node (e.g. a collapsed steps list still
-        // holding an already-completed turn) can win the "smallest distance"
-        // comparison below and get shown even though you've already passed
-        // it — this is almost certainly why old turns kept reappearing.
+        // holding an already-completed turn) can win the topmost comparison
+        // below and get shown even though you've already passed it — this
+        // is almost certainly why old turns kept reappearing.
         val turnVerbs = listOf(
             "turn", "continue", "head", "keep", "take", "merge", "u-turn",
             "uturn", "roundabout", "exit", "straight", "arrive"
@@ -139,10 +143,10 @@ class NavAccessibilityService : AccessibilityService() {
         // Maps sometimes renders a SEPARATE landmark-narration node for the
         // same upcoming point — e.g. "At Baroda Dairy Circle, continue" —
         // alongside the real maneuver banner ("Slight right onto Kanaiyalal
-        // Munshi Marg"). Both contain a turnVerb ("continue") and land on
-        // nearly the same distance, so unfiltered they compete in the
-        // minByOrNull below and can flip-flop which one "wins" from event
-        // to event — that's what looks like an old turn reappearing.
+        // Munshi Marg"). Both contain a turnVerb ("continue") and can land
+        // at nearly the same screen position, so unfiltered they compete
+        // and can flip-flop which one "wins" from event to event — that's
+        // what looks like an old turn reappearing.
         // "At the roundabout"/"At the traffic circle" are legitimate real
         // instructions and stay allowed; only the "At <named place>,"
         // landmark-narration shape gets dropped.
@@ -150,20 +154,15 @@ class NavAccessibilityService : AccessibilityService() {
             """^at\s+(?!the\s+roundabout|the\s+traffic\s+circle)""",
             RegexOption.IGNORE_CASE
         )
-        val candidatesRaw = allText
-            .filter { distanceRegex.containsMatchIn(it) }
-            .filterNot { it.trim().startsWith("then ", ignoreCase = true) }
-            .filter { text -> turnVerbs.any { text.contains(it, ignoreCase = true) } }
-        val nonLandmark = candidatesRaw.filterNot { landmarkNarrationRegex.containsMatchIn(it.trim()) }
+        val candidatesRaw = allNodes
+            .filter { distanceRegex.containsMatchIn(it.text) }
+            .filterNot { it.text.trim().startsWith("then ", ignoreCase = true) }
+            .filter { node -> turnVerbs.any { node.text.contains(it, ignoreCase = true) } }
+        val nonLandmark = candidatesRaw.filterNot { landmarkNarrationRegex.containsMatchIn(it.text.trim()) }
         // Fall back to the unfiltered list only if landmark-filtering would
         // leave nothing at all — better a landmark line than no candidate.
         val candidates = if (nonLandmark.isNotEmpty()) nonLandmark else candidatesRaw
-        val instructionNode = candidates.minByOrNull { candidate ->
-            val m = distanceRegex.find(candidate)
-            val value = m?.groupValues?.get(1)?.toFloatOrNull()
-            val unit = m?.groupValues?.get(2) ?: "m"
-            if (value == null) Float.MAX_VALUE else toMetres(value, unit).toFloat()
-        }
+        val instructionNode = candidates.minByOrNull { it.top }?.text
 
         // Find current speed
         val speedNode = allText.firstOrNull {
@@ -357,12 +356,14 @@ class NavAccessibilityService : AccessibilityService() {
         return buf
     }
 
-    private fun collectText(node: AccessibilityNodeInfo?, list: MutableList<String>) {
+    private fun collectText(node: AccessibilityNodeInfo?, list: MutableList<TextNode>) {
         if (node == null) return
+        val bounds = android.graphics.Rect()
+        node.getBoundsInScreen(bounds)
         val text = node.text?.toString()
-        if (!text.isNullOrBlank()) list.add(text)
+        if (!text.isNullOrBlank()) list.add(TextNode(text, bounds.top))
         val desc = node.contentDescription?.toString()
-        if (!desc.isNullOrBlank() && desc != text) list.add(desc)
+        if (!desc.isNullOrBlank() && desc != text) list.add(TextNode(desc, bounds.top))
         for (i in 0 until node.childCount) {
             collectText(node.getChild(i), list)
         }
@@ -370,3 +371,16 @@ class NavAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 }
+
+// Text paired with its on-screen top-Y coordinate. Maps' live turn-by-turn
+// banner always renders at the top of the screen; the expandable steps
+// list (opened via "Activate to open step list", or sometimes present in
+// the tree even collapsed) renders below it. Each step in that list carries
+// its OWN embedded distance — the length of that road segment, not the
+// distance from your current position — so picking "smallest distance"
+// across all matching text can grab a short FUTURE segment several turns
+// down the route instead of the real current instruction. Tracking
+// position lets us prefer whatever's topmost on screen instead, which is
+// reliably the live banner regardless of what distance numbers happen to
+// appear elsewhere in the tree.
+private data class TextNode(val text: String, val top: Int)
