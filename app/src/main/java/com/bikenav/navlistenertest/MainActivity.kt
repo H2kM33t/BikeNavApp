@@ -269,6 +269,30 @@ class MainActivity : AppCompatActivity() {
                 ?.refreshLogsVisibility()
         }
 
+        // IconLearner persists icon-hash -> turn/angle mappings across app
+        // restarts (that's the whole point - learn once, not once per
+        // ride). But that also means a mapping learned under OLD
+        // classification logic silently survives an app UPDATE and keeps
+        // overriding the new logic for any icon it already learned - e.g.
+        // straight/right-side roundabout icons taught the wrong angle
+        // before the RoundaboutGeometry fix keep reading wrong afterward
+        // until explicitly cleared, since NavDataState always prefers a
+        // learned icon match over a fresh text-based read.
+        val clearButton = view.findViewById<android.widget.Button>(R.id.clearLearnedIconsButton)
+        clearButton.setOnClickListener {
+            // init() is idempotent (no-ops if already initialized) - called
+            // here so Clear reliably wipes the PERSISTED prefs even if this
+            // is a fresh app launch and the notification listener service
+            // (the usual caller of init()) hasn't connected yet.
+            IconLearner.init(applicationContext)
+            IconLearner.clear()
+            android.widget.Toast.makeText(
+                this,
+                "Learned turn icons cleared - they'll relearn as you ride",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+
         MaterialAlertDialogBuilder(this)
             .setView(view)
             .setPositiveButton("Done") { dialog, _ ->

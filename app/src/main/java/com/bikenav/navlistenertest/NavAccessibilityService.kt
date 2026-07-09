@@ -180,9 +180,6 @@ class NavAccessibilityService : AccessibilityService() {
         val distanceUnit = distanceMatch?.groupValues?.get(2) ?: "m"
         val distanceMetres = toMetres(distanceValue, distanceUnit)
 
-        // Parse turn direction
-        val turn = parseTurnDirection(instructionNode)
-
         // Parse speed
         val speedMatch = speedNode?.let { speedRegex.find(it) }
         val speedKmh = speedMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
@@ -197,6 +194,17 @@ class NavAccessibilityService : AccessibilityService() {
         val instruction = instructionNode
             .replace(instructionSuffixRegex, "")
             .trim()
+            // The roundabout icon on-device already conveys "you're at a
+            // roundabout" — this generic prefix was eating both of the
+            // OLED's 2 wrap lines, so the actual road name/direction
+            // ("...take the 2nd exit onto Palace Rd") never made it onto
+            // the screen at all. Stripping it here frees that space for
+            // the part that's actually useful to glance at. Purely a
+            // display-text change — does not affect angle/turn parsing,
+            // which both read from instructionNode (above), not this.
+            .replace(Regex("""^at the (roundabout|traffic circle),?\s*""", RegexOption.IGNORE_CASE), "")
+            .trim()
+            .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
 
         // Roundabout exit angle: Google Maps' spoken/on-screen instruction
         // often literally says which exit to take (e.g. "take the 2nd
@@ -222,19 +230,36 @@ class NavAccessibilityService : AccessibilityService() {
         val roundaboutAngleDeg: Int = when {
             exitNumberMatch != null -> {
                 val exitNum = exitNumberMatch.groupValues[1].toIntOrNull() ?: 4
-                // India (and other left-hand-traffic countries) drive on the
-                // left, so roundabouts circulate CLOCKWISE: as the exit
-                // number increases, each successive exit is further to your
-                // LEFT (1st exit = sharp left), not further right. Sweeping
-                // counterclockwise here (360 - exitNum*45) matches that,
-                // instead of the US/right-hand-traffic convention where a
-                // low exit number is a near-right turn.
-                (360 - (exitNum * 45) % 360) % 360
+                // Delegates to RoundaboutGeometry so this can never drift out
+                // of sync with NavNotificationListener's copy again - see its
+                // doc for why the old separately-maintained formula here was
+                // 180deg inverted from the firmware's compass convention.
+                RoundaboutGeometry.angleForExit(exitNum)
             }
             instructionNode.contains("straight", ignoreCase = true) -> 0
             instructionNode.contains("left", ignoreCase = true) -> 270
             instructionNode.contains("right", ignoreCase = true) -> 90
-            else -> 180
+            // Genuinely nothing to go on yet (e.g. Maps has only shown "At
+            // the roundabout," with no exit number in view). Previously
+            // this fell through to a plain 180 - which now legitimately
+            // means "you're looping almost all the way back" - so "not
+            // sure yet" and "you're doing a near-full loop" rendered as
+            // the exact same (visually blank) icon. See
+            // RoundaboutGeometry.ANGLE_UNKNOWN.
+            else -> RoundaboutGeometry.ANGLE_UNKNOWN
+        }
+
+        // Parse turn direction. parseTurnDirection() returns a placeholder
+        // 9 (ROUNDABOUT_LEFT) for ANY roundabout mention, since text alone
+        // can't reliably tell left from right (see RoundaboutGeometry doc).
+        // Now that roundaboutAngleDeg is known, resolve the real side from
+        // the SAME angle math driving the icon's rotation, instead of
+        // trusting whichever default parseTurnDirection guessed.
+        val baseTurn = parseTurnDirection(instructionNode)
+        val turn = if (baseTurn == 9 || baseTurn == 10) {
+            if (RoundaboutGeometry.isRightSide(roundaboutAngleDeg)) 10 else 9
+        } else {
+            baseTurn
         }
 
         // ---- Interlock gate ----
@@ -292,9 +317,13 @@ class NavAccessibilityService : AccessibilityService() {
         //   9=ROUNDABOUT_LEFT 10=ROUNDABOUT_RIGHT 11=MERGE
         //   12=FORK_LEFT 13=FORK_RIGHT 14=RAMP_LEFT 15=RAMP_RIGHT
         return when {
+            // India (left-hand traffic): an unqualified "Make a U-turn"
+            // sweeps from the left lane across to the right, so RIGHT is
+            // the correct default whenever Maps doesn't say a side at all.
+            // Only honor an explicit "left" if Maps actually says one.
             (leadPhrase.contains("u-turn") || leadPhrase.contains("uturn")) &&
-                    leadPhrase.contains("right") -> 8
-            leadPhrase.contains("u-turn") || leadPhrase.contains("uturn") -> 7
+                    leadPhrase.contains("left") -> 7
+            leadPhrase.contains("u-turn") || leadPhrase.contains("uturn") -> 8
             leadPhrase.contains("sharp left") -> 5
             leadPhrase.contains("sharp right") -> 6
             leadPhrase.contains("slight left") -> 3
@@ -306,7 +335,10 @@ class NavAccessibilityService : AccessibilityService() {
             leadPhrase.contains("merge") -> 11
             leadPhrase.contains("turn left") || leadPhrase.startsWith("left") -> 1
             leadPhrase.contains("turn right") || leadPhrase.startsWith("right") -> 2
-            leadPhrase.contains("roundabout") && leadPhrase.contains("right") -> 10
+            // Placeholder only - text can't reliably tell left from right
+            // for a roundabout exit. The caller overrides this with the
+            // angle-derived side once roundaboutAngleDeg is known; see
+            // RoundaboutGeometry.
             leadPhrase.contains("roundabout") -> 9
             leadPhrase.contains("straight") || leadPhrase.contains("head") || leadPhrase.contains("continue") -> 0
             else -> 0
