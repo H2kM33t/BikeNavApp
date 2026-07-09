@@ -1,0 +1,98 @@
+[
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/layout_dialog_device_scan.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/layout/dialog_device_scan.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/layout_activity_main.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/layout_fragment_splash.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/layout/fragment_splash.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/drawable_ic_accessibility.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/drawable/ic_accessibility.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/drawable_bg_pill_done.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/drawable/bg_pill_done.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/drawable_ic_bluetooth_scan.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/drawable/ic_bluetooth_scan.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/drawable_ic_launcher_background.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/drawable/ic_launcher_background.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/drawable_ic_settings.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/drawable/ic_settings.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/layout_fragment_permissions.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/layout/fragment_permissions.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/drawable_ic_launcher_foreground.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/drawable/ic_launcher_foreground.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/drawable_bg_surface_alt.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/drawable/bg_surface_alt.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/layout_fragment_dashboard.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/layout/fragment_dashboard.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/drawable_ic_question_mark.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/drawable/ic_question_mark.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/drawable_bg_surface.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/drawable/bg_surface.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/layout_fragment_bluetooth.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/layout/fragment_bluetooth.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/layout_dialog_settings.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/layout/dialog_settings.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/drawable_ic_check_circle.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/drawable/ic_check_circle.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/drawable_bg_gradient_card.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/drawable/bg_gradient_card.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/drawable_ic_notification.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/drawable/ic_notification.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/xml_data_extraction_rules.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/xml/data_extraction_rules.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/xml_accessibility_service_config.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/xml/accessibility_service_config.xml"
+    },
+    {
+        "merged": "com.bikenav.navlistenertest.app-debug-4:/drawable_dot_status.xml.flat",
+        "source": "com.bikenav.navlistenertest.app-main-6:/drawable/dot_status.xml"
+    }
+]

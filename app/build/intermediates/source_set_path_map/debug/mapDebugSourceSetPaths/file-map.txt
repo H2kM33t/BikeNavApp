@@ -1,0 +1,34 @@
+com.bikenav.navlistenertest.app-pngs-0 C:\Android Development\Backups\BikeNavApp_Stable_v0.4\app\build\generated\res\pngs\debug
+com.bikenav.navlistenertest.app-resValues-1 C:\Android Development\Backups\BikeNavApp_Stable_v0.4\app\build\generated\res\resValues\debug
+com.bikenav.navlistenertest.app-packageDebugResources-2 C:\Android Development\Backups\BikeNavApp_Stable_v0.4\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+com.bikenav.navlistenertest.app-packageDebugResources-3 C:\Android Development\Backups\BikeNavApp_Stable_v0.4\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+com.bikenav.navlistenertest.app-debug-4 C:\Android Development\Backups\BikeNavApp_Stable_v0.4\app\build\intermediates\merged_res\debug\mergeDebugResources
+com.bikenav.navlistenertest.app-debug-5 C:\Android Development\Backups\BikeNavApp_Stable_v0.4\app\src\debug\res
+com.bikenav.navlistenertest.app-main-6 C:\Android Development\Backups\BikeNavApp_Stable_v0.4\app\src\main\res
+com.bikenav.navlistenertest.app-viewpager2-1.0.0-7 C:\Users\mynam\.gradle\caches\9.3.0\transforms\00335b03c69f265104812a37ea1a5ac7\workspace\transformed\viewpager2-1.0.0\res
+com.bikenav.navlistenertest.app-appcompat-1.7.0-8 C:\Users\mynam\.gradle\caches\9.3.0\transforms\005c8c6762ed4a3f1d65b03ecf5f8409\workspace\transformed\appcompat-1.7.0\res
+com.bikenav.navlistenertest.app-constraintlayout-2.0.1-9 C:\Users\mynam\.gradle\caches\9.3.0\transforms\04e44cd1a49b856e5c401caccb876b51\workspace\transformed\constraintlayout-2.0.1\res
+com.bikenav.navlistenertest.app-fragment-1.5.4-10 C:\Users\mynam\.gradle\caches\9.3.0\transforms\078487dcabd8dff62dc5ccc1321e6966\workspace\transformed\fragment-1.5.4\res
+com.bikenav.navlistenertest.app-appcompat-resources-1.7.0-11 C:\Users\mynam\.gradle\caches\9.3.0\transforms\092d36546d556133cd1e2a125c65b0b4\workspace\transformed\appcompat-resources-1.7.0\res
+com.bikenav.navlistenertest.app-drawerlayout-1.1.1-12 C:\Users\mynam\.gradle\caches\9.3.0\transforms\23fa8daa5081fab5130798a7f6cbf3e7\workspace\transformed\drawerlayout-1.1.1\res
+com.bikenav.navlistenertest.app-coordinatorlayout-1.1.0-13 C:\Users\mynam\.gradle\caches\9.3.0\transforms\2a759a0389ec6265c704326607d2489b\workspace\transformed\coordinatorlayout-1.1.0\res
+com.bikenav.navlistenertest.app-material-1.12.0-14 C:\Users\mynam\.gradle\caches\9.3.0\transforms\308454ed809e3f38e19ee1b211d44964\workspace\transformed\material-1.12.0\res
+com.bikenav.navlistenertest.app-emoji2-views-helper-1.3.0-15 C:\Users\mynam\.gradle\caches\9.3.0\transforms\314889c76dea0f6a098906213c8473dc\workspace\transformed\emoji2-views-helper-1.3.0\res
+com.bikenav.navlistenertest.app-lifecycle-viewmodel-savedstate-2.6.2-16 C:\Users\mynam\.gradle\caches\9.3.0\transforms\4225db87849db930f5d75b4fc14c73da\workspace\transformed\lifecycle-viewmodel-savedstate-2.6.2\res
+com.bikenav.navlistenertest.app-core-ktx-1.13.1-17 C:\Users\mynam\.gradle\caches\9.3.0\transforms\4c9e5c314ca16caf3f20cd806cd89129\workspace\transformed\core-ktx-1.13.1\res
+com.bikenav.navlistenertest.app-lifecycle-viewmodel-2.6.2-18 C:\Users\mynam\.gradle\caches\9.3.0\transforms\4e9aee6cd654a0477ba34b0480180c9f\workspace\transformed\lifecycle-viewmodel-2.6.2\res
+com.bikenav.navlistenertest.app-core-runtime-2.2.0-19 C:\Users\mynam\.gradle\caches\9.3.0\transforms\5271ad1789c6cb4caae5a12df0bb6bfd\workspace\transformed\core-runtime-2.2.0\res
+com.bikenav.navlistenertest.app-profileinstaller-1.3.1-20 C:\Users\mynam\.gradle\caches\9.3.0\transforms\52a3dfb2d9b829c4bcfa22c5b10065f7\workspace\transformed\profileinstaller-1.3.1\res
+com.bikenav.navlistenertest.app-lifecycle-livedata-core-2.6.2-21 C:\Users\mynam\.gradle\caches\9.3.0\transforms\71e2534f65dcb33a4f46720f9233cf5e\workspace\transformed\lifecycle-livedata-core-2.6.2\res
+com.bikenav.navlistenertest.app-recyclerview-1.1.0-22 C:\Users\mynam\.gradle\caches\9.3.0\transforms\75c0d9906d5734752ace4123064b3312\workspace\transformed\recyclerview-1.1.0\res
+com.bikenav.navlistenertest.app-transition-1.5.0-23 C:\Users\mynam\.gradle\caches\9.3.0\transforms\7b335fdac03d8df2cbf007e9d955691b\workspace\transformed\transition-1.5.0\res
+com.bikenav.navlistenertest.app-activity-1.8.0-24 C:\Users\mynam\.gradle\caches\9.3.0\transforms\7da3cbcd3064c0ddfe9c90accc45c5a4\workspace\transformed\activity-1.8.0\res
+com.bikenav.navlistenertest.app-lifecycle-livedata-2.6.2-25 C:\Users\mynam\.gradle\caches\9.3.0\transforms\7ff907f872ede8b9f1ce9b810e119aea\workspace\transformed\lifecycle-livedata-2.6.2\res
+com.bikenav.navlistenertest.app-lifecycle-runtime-2.6.2-26 C:\Users\mynam\.gradle\caches\9.3.0\transforms\9863f533a974a58aea52335066c4e0a4\workspace\transformed\lifecycle-runtime-2.6.2\res
+com.bikenav.navlistenertest.app-savedstate-1.2.1-27 C:\Users\mynam\.gradle\caches\9.3.0\transforms\9e532bc3f35919d7a23fdce61c2d0a0d\workspace\transformed\savedstate-1.2.1\res
+com.bikenav.navlistenertest.app-annotation-experimental-1.4.0-28 C:\Users\mynam\.gradle\caches\9.3.0\transforms\afd776775a450425f9c43e7768778b6e\workspace\transformed\annotation-experimental-1.4.0\res
+com.bikenav.navlistenertest.app-lifecycle-process-2.6.2-29 C:\Users\mynam\.gradle\caches\9.3.0\transforms\b015e9117a427d5fdfe7058c53c00844\workspace\transformed\lifecycle-process-2.6.2\res
+com.bikenav.navlistenertest.app-core-1.13.1-30 C:\Users\mynam\.gradle\caches\9.3.0\transforms\bf89162ae3a323bacc1f2afbf831c8e8\workspace\transformed\core-1.13.1\res
+com.bikenav.navlistenertest.app-emoji2-1.3.0-31 C:\Users\mynam\.gradle\caches\9.3.0\transforms\ce8979f83f245ab6adf93ff3a26bcc44\workspace\transformed\emoji2-1.3.0\res
+com.bikenav.navlistenertest.app-cardview-1.0.0-32 C:\Users\mynam\.gradle\caches\9.3.0\transforms\d25d146d41c090dfa0a71b1d6309a616\workspace\transformed\cardview-1.0.0\res
+com.bikenav.navlistenertest.app-startup-runtime-1.1.1-33 C:\Users\mynam\.gradle\caches\9.3.0\transforms\dce1f4f91bba7e877496a545b614c649\workspace\transformed\startup-runtime-1.1.1\res
