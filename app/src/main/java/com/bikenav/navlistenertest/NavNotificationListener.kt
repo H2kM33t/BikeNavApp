@@ -106,6 +106,20 @@ class NavNotificationListener : NotificationListenerService() {
     // reposts a notification while it's updating internally.
     private val REMOVAL_DEBOUNCE_MS = 2500L
 
+    // Deep inside a gated society / apartment complex, GPS multipath off
+    // buildings makes Maps' position jump around right when you're closest
+    // to the destination, which makes it post/remove/repost the nav
+    // notification far more erratically than out on the open road. With
+    // only REMOVAL_DEBOUNCE_MS of patience, that flapping was reading as
+    // repeated "nav ended" events and blanking the display to "No route
+    // data" right before arrival — the worst possible moment for it to go
+    // dark. When we know from the last accessibility read that the route's
+    // final stretch was already short, wait much longer before believing
+    // the removal is real, since a false "ended" here is far more likely
+    // than out on a long rural leg.
+    private val REMOVAL_DEBOUNCE_NEAR_ARRIVAL_MS = 9000L
+    private val NEAR_ARRIVAL_THRESHOLD_METRES = 200
+
     override fun onListenerConnected() {
         NavLog.post("=== Listener connected ===")
         IconLearner.init(applicationContext)
@@ -242,7 +256,14 @@ class NavNotificationListener : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         if (sbn.packageName != "com.google.android.apps.maps") return
-        NavLog.post("--- Maps notification removed (debouncing ${REMOVAL_DEBOUNCE_MS}ms) ---")
+
+        val remainDist = NavDataState.lastKnownRemainDist()
+        val debounceMs = if (remainDist in 1 until NEAR_ARRIVAL_THRESHOLD_METRES) {
+            REMOVAL_DEBOUNCE_NEAR_ARRIVAL_MS
+        } else {
+            REMOVAL_DEBOUNCE_MS
+        }
+        NavLog.post("--- Maps notification removed (debouncing ${debounceMs}ms, lastRemainDist=${remainDist}m) ---")
 
         val runnable = Runnable {
             NavLog.post("--- Confirmed navigation ended ---")
@@ -253,7 +274,7 @@ class NavNotificationListener : NotificationListenerService() {
             // (8s) passes with no new packet, so nothing needs to be sent here.
         }
         pendingClearRunnable = runnable
-        handler.postDelayed(runnable, REMOVAL_DEBOUNCE_MS)
+        handler.postDelayed(runnable, debounceMs)
     }
 
     /**

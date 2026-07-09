@@ -128,6 +128,14 @@ object NavDataState {
     }
 
     /**
+     * Last known remaining-route distance, for callers deciding how to react
+     * to Maps going quiet (e.g. NavNotificationListener choosing how long to
+     * wait before clearing on notification removal). Not itself sent in a
+     * packet by this function.
+     */
+    fun lastKnownRemainDist(): Int = accessRemainDist
+
+    /**
      * Returns the current roundabout angle only if it was just derived
      * confidently (an exact "Nth exit" match, not a straight/left/right/
      * generic fallback guess) and recently enough to plausibly be for the
@@ -165,9 +173,19 @@ object NavDataState {
         // "321 m") meant for screen readers — same underlying distance, two
         // different roundings. Preferring notification's here makes the
         // ESP32 match what you actually see on your phone screen.
+        //
+        // On rural roads Maps frequently posts a bare "Head toward Ring
+        // Road" with NO leading distance number at all (there's no next
+        // turn to count down to yet), so both notifDistToTurn and
+        // accessDistToTurn land on 0 for a long stretch. Showing a flat 0m
+        // on the display reads as "you're basically there," which is wrong
+        // and confusing on a long straight. Fall back to the known
+        // remaining-route distance in that case — still real data Maps
+        // gave us, just not "distance to next turn."
         val distToTurn = when {
             notifDistToTurn > 0 -> notifDistToTurn
             accessDistToTurn > 0 -> accessDistToTurn
+            accessRemainDist > 0 -> accessRemainDist
             else -> 0
         }
 
