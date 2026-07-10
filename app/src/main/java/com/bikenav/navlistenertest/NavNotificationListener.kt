@@ -106,20 +106,6 @@ class NavNotificationListener : NotificationListenerService() {
     // reposts a notification while it's updating internally.
     private val REMOVAL_DEBOUNCE_MS = 2500L
 
-    // Deep inside a gated society / apartment complex, GPS multipath off
-    // buildings makes Maps' position jump around right when you're closest
-    // to the destination, which makes it post/remove/repost the nav
-    // notification far more erratically than out on the open road. With
-    // only REMOVAL_DEBOUNCE_MS of patience, that flapping was reading as
-    // repeated "nav ended" events and blanking the display to "No route
-    // data" right before arrival — the worst possible moment for it to go
-    // dark. When we know from the last accessibility read that the route's
-    // final stretch was already short, wait much longer before believing
-    // the removal is real, since a false "ended" here is far more likely
-    // than out on a long rural leg.
-    private val REMOVAL_DEBOUNCE_NEAR_ARRIVAL_MS = 9000L
-    private val NEAR_ARRIVAL_THRESHOLD_METRES = 200
-
     override fun onListenerConnected() {
         NavLog.post("=== Listener connected ===")
         IconLearner.init(applicationContext)
@@ -256,14 +242,7 @@ class NavNotificationListener : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         if (sbn.packageName != "com.google.android.apps.maps") return
-
-        val remainDist = NavDataState.lastKnownRemainDist()
-        val debounceMs = if (remainDist in 1 until NEAR_ARRIVAL_THRESHOLD_METRES) {
-            REMOVAL_DEBOUNCE_NEAR_ARRIVAL_MS
-        } else {
-            REMOVAL_DEBOUNCE_MS
-        }
-        NavLog.post("--- Maps notification removed (debouncing ${debounceMs}ms, lastRemainDist=${remainDist}m) ---")
+        NavLog.post("--- Maps notification removed (debouncing ${REMOVAL_DEBOUNCE_MS}ms) ---")
 
         val runnable = Runnable {
             NavLog.post("--- Confirmed navigation ended ---")
@@ -274,7 +253,7 @@ class NavNotificationListener : NotificationListenerService() {
             // (8s) passes with no new packet, so nothing needs to be sent here.
         }
         pendingClearRunnable = runnable
-        handler.postDelayed(runnable, debounceMs)
+        handler.postDelayed(runnable, REMOVAL_DEBOUNCE_MS)
     }
 
     /**
@@ -284,15 +263,6 @@ class NavNotificationListener : NotificationListenerService() {
      */
     private fun classifyManeuver(instruction: String): ManeuverType {
         val t = instruction.lowercase()
-        // Computed once up front so both the exit-number branch and the
-        // fallback "at the roundabout" branch below can derive their
-        // left/right side from the SAME clockwise angle math the display
-        // rotation uses, instead of checking whether the word "right"
-        // happens to appear in the text - see RoundaboutGeometry doc for
-        // why that keyword check was unreliable (it almost never matches).
-        val exitMatch = exitOrdinalRegex.find(t)
-        val exitAngle = exitMatch?.groupValues?.get(1)?.toIntOrNull()
-            ?.let { RoundaboutGeometry.angleForExit(it) }
 
         return when {
             t.contains("rerouting") || t.contains("recalculating") -> ManeuverType.REROUTING
@@ -300,12 +270,8 @@ class NavNotificationListener : NotificationListenerService() {
             t.contains("you have arrived") || t.contains("arrive at") || t.startsWith("arrived") ->
                 ManeuverType.ARRIVE
 
-            // India (left-hand traffic): an unqualified "Make a U-turn"
-            // sweeps from the left lane across to the right, so RIGHT is
-            // the correct default. Only honor an explicit "left" if Maps
-            // actually says one.
             t.contains("u-turn") || t.contains("u turn") ->
-                if (t.contains("left")) ManeuverType.U_TURN_LEFT else ManeuverType.U_TURN_RIGHT
+                if (t.contains("right")) ManeuverType.U_TURN_RIGHT else ManeuverType.U_TURN_LEFT
 
             t.contains("sharp left") -> ManeuverType.SHARP_LEFT
             t.contains("sharp right") -> ManeuverType.SHARP_RIGHT
@@ -319,25 +285,19 @@ class NavNotificationListener : NotificationListenerService() {
             t.contains("keep left") -> ManeuverType.KEEP_LEFT
             t.contains("keep right") -> ManeuverType.KEEP_RIGHT
 
-            // Directional roundabout exit: derived from the exit number's
-            // actual angle (same clockwise math as the icon rotation), not
-            // from whether the word "right" happens to appear in the text -
-            // Maps virtually never says left/right for a roundabout exit,
-            // it says "take the Nth exit", so that keyword check almost
-            // always fell through to LEFT regardless of the real side.
-            exitAngle != null ->
-                if (RoundaboutGeometry.isRightSide(exitAngle)) ManeuverType.EXIT_ROUNDABOUT_RIGHT
+            // Directional roundabout exit: Maps doesn't say left/right
+            // explicitly for the exit itself, so infer from whether the exit
+            // number is on the smaller (left/counterclockwise) or larger
+            // (right/clockwise) half; default to left if we can't tell.
+            exitOrdinalRegex.containsMatchIn(t) ->
+                if (t.contains("right")) ManeuverType.EXIT_ROUNDABOUT_RIGHT
                 else ManeuverType.EXIT_ROUNDABOUT_LEFT
             t.contains("exit the roundabout") || t.contains("exit roundabout") ->
                 if (t.contains("right")) ManeuverType.EXIT_ROUNDABOUT_RIGHT
                 else ManeuverType.EXIT_ROUNDABOUT_LEFT
             t.contains("roundabout") || t.contains("rotary") ->
-                // No exit number yet (e.g. the initial "At the roundabout,
-                // take the Xth exit" announcement before the number is
-                // legible) - side is genuinely unknown from text alone here,
-                // left as a placeholder; IconLearner/accessibility resolve
-                // the real side once the exit number is available.
-                ManeuverType.ROUNDABOUT_LEFT
+                if (t.contains("right")) ManeuverType.ROUNDABOUT_RIGHT
+                else ManeuverType.ROUNDABOUT_LEFT
 
             t.contains("take the ferry") || t.contains("ferry") -> ManeuverType.FERRY
 
