@@ -32,6 +32,11 @@ object BleNavClient {
     private const val RECONNECT_INITIAL_DELAY_MS = 3_000L
     private const val RECONNECT_MAX_DELAY_MS = 30_000L
 
+    // Negotiated MTU is 247 (see requestMtu below), leaving 244 usable ATT
+    // bytes (247 - 3 byte header). Cap well under that so we never hit a
+    // truncated write on a phone that negotiates slightly less than asked.
+    private const val MAX_PACKET_BYTES = 230
+
     // Resends whatever nav payload we last had, on a fixed interval, for as
     // long as we're connected — well under the firmware's PACKET_TIMEOUT_MS
     // (20s). This used to live only inside NavAccessibilityService's own
@@ -115,11 +120,13 @@ object BleNavClient {
 
     @SuppressLint("MissingPermission")
     private fun proceedAfterBonded(gatt: BluetoothGatt) {
-        // Default ATT MTU is 23 bytes (20 usable) — too small for our
-        // packet (7-byte header + up to 60 bytes text). Request more
-        // before discovering services; writes before this completes
-        // will still be truncated.
-        gatt.requestMtu(185)
+        // Default ATT MTU is 23 bytes (20 usable) — way too small for our
+        // packet. 185 was enough for the old text-only format (10-byte
+        // header + up to 60 bytes text = 70 bytes), but roundabout packets
+        // now also carry a 128-byte bitmap (10 + 128 + 60 = 198 bytes), so
+        // request the common practical ceiling instead. Request before
+        // discovering services; writes before this completes are truncated.
+        gatt.requestMtu(247)
     }
 
     private val stateListeners = mutableListOf<(BleState) -> Unit>()
@@ -402,7 +409,7 @@ object BleNavClient {
             val payload = pendingWrite ?: return@postDelayed
             val gatt = bluetoothGatt ?: return@postDelayed
             val char = navCharacteristic ?: return@postDelayed
-            val bytes = payload.toByteArray(Charsets.UTF_8).take(180).toByteArray()
+            val bytes = payload.toByteArray(Charsets.UTF_8).take(MAX_PACKET_BYTES).toByteArray()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 gatt.writeCharacteristic(
                     char, bytes,
@@ -431,7 +438,7 @@ object BleNavClient {
             val payload = pendingBytes ?: return@postDelayed
             val gatt = bluetoothGatt ?: return@postDelayed
             val char = navCharacteristic ?: return@postDelayed
-            val data = payload.take(180).toByteArray()
+            val data = payload.take(MAX_PACKET_BYTES).toByteArray()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 gatt.writeCharacteristic(
                     char, data,

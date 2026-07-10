@@ -12,13 +12,21 @@ import android.content.SharedPreferences
  * this means an ambiguous or unrecognized phrasing on turn #40 gets
  * corrected for free if turn #3 already taught us that exact icon.
  *
+ * This only handles the coarse maneuver category (left/right/straight/
+ * roundabout/fork/...), where shapes are visually distinct enough for a
+ * tolerant 64-bit hash match to be reliable. It intentionally does NOT
+ * handle the roundabout exit angle anymore — different exits are too
+ * visually similar at hash resolution for that, and teaching the table
+ * from text baked in whatever the text regex got wrong. The exit angle is
+ * now measured directly from the icon's pixels every time, in
+ * IconAngleAnalyzer, with no hash lookup and no text involved.
+ *
  * Persisted across app restarts so it only needs to "learn" once, not once
  * per ride.
  */
 object IconLearner {
     private const val PREFS_NAME = "icon_learner"
     private const val KEY_MAP = "hash_to_turn"
-    private const val KEY_ANGLE_MAP = "hash_to_angle"
 
     // Two icons for genuinely different maneuvers can differ by only a few
     // pixels at thumbnail resolution (e.g. slight-left vs sharp-left), so
@@ -29,7 +37,6 @@ object IconLearner {
 
     private lateinit var prefs: SharedPreferences
     private val cache = mutableMapOf<Long, Int>()
-    private val angleCache = mutableMapOf<Long, Int>()
     private var initialized = false
 
     @Synchronized
@@ -46,18 +53,8 @@ object IconLearner {
                 if (hash != null && turn != null) cache[hash] = turn
             }
         }
-        angleCache.clear()
-        prefs.getString(KEY_ANGLE_MAP, null)?.split(";")?.forEach { entry ->
-            if (entry.isBlank()) return@forEach
-            val parts = entry.split(":")
-            if (parts.size == 2) {
-                val hash = parts[0].toLongOrNull()
-                val angle = parts[1].toIntOrNull()
-                if (hash != null && angle != null) angleCache[hash] = angle
-            }
-        }
         initialized = true
-        NavLog.post("IconLearner: loaded ${cache.size} turn icon(s), ${angleCache.size} roundabout angle icon(s)")
+        NavLog.post("IconLearner: loaded ${cache.size} turn icon(s)")
     }
 
     @Synchronized
@@ -88,45 +85,6 @@ object IconLearner {
         return if (bestDist <= MAX_HAMMING_DISTANCE) bestTurn else null
     }
 
-    /**
-     * Learns which exact exit angle a roundabout icon corresponds to. Unlike
-     * the turn code (which only needs left/right), the angle is exact
-     * degrees, so this is only learned when the accessibility text gave a
-     * CONFIDENT angle (i.e. it actually found "2nd exit" etc. in the text,
-     * not one of the generic straight/left/right/else fallback guesses).
-     */
-    @Synchronized
-    fun learnAngle(hash: Long, angleDeg: Int) {
-        if (!initialized) return
-        val prev = angleCache[hash]
-        angleCache[hash] = angleDeg
-        if (prev != angleDeg) {
-            persistAngles()
-            NavLog.post("IconLearner: learned roundabout angle hash=$hash -> ${angleDeg}deg")
-        }
-    }
-
-    @Synchronized
-    fun lookupAngle(hash: Long): Int? {
-        if (!initialized) return null
-        angleCache[hash]?.let { return it }
-        var bestAngle: Int? = null
-        var bestDist = Int.MAX_VALUE
-        for ((h, a) in angleCache) {
-            val d = IconHasher.hammingDistance(h, hash)
-            if (d < bestDist) {
-                bestDist = d
-                bestAngle = a
-            }
-        }
-        return if (bestDist <= MAX_HAMMING_DISTANCE) bestAngle else null
-    }
-
-    private fun persistAngles() {
-        val serialized = angleCache.entries.joinToString(";") { "${it.key}:${it.value}" }
-        prefs.edit().putString(KEY_ANGLE_MAP, serialized).apply()
-    }
-
     private fun persist() {
         val serialized = cache.entries.joinToString(";") { "${it.key}:${it.value}" }
         prefs.edit().putString(KEY_MAP, serialized).apply()
@@ -136,7 +94,6 @@ object IconLearner {
     @Synchronized
     fun clear() {
         cache.clear()
-        angleCache.clear()
-        if (initialized) prefs.edit().remove(KEY_MAP).remove(KEY_ANGLE_MAP).apply()
+        if (initialized) prefs.edit().remove(KEY_MAP).apply()
     }
 }

@@ -27,6 +27,12 @@ import android.os.Looper
  *   3) NavNotificationListener's text parse - simplest, no interlock, used
  *      only if neither of the above is available yet (e.g. right at the
  *      start of a ride before anything's been learned).
+ *
+ * The roundabout exit angle is a special case: it's measured directly from
+ * the icon's own pixels every time (IconAngleAnalyzer), not learned or
+ * hash-looked-up, so whenever an icon reading exists it's trusted outright.
+ * The text-derived angle (accessAngle) only fills in before the first
+ * roundabout notification of a ride has been analyzed.
  */
 object NavDataState {
     private val handler = Handler(Looper.getMainLooper())
@@ -35,6 +41,10 @@ object NavDataState {
 
     @Volatile private var iconTurn: Int? = null
     @Volatile private var iconAngle: Int? = null
+    // Raw 32x32 1-bit XBM bitmap of the roundabout icon Maps actually drew
+    // (see IconBitmapConverter), sent to the ESP32 instead of a computed
+    // angle whenever we have one. Only ever non-null for roundabout icons.
+    @Volatile private var iconBitmapBytes: ByteArray? = null
 
     @Volatile private var gpsSpeedKmh: Int? = null
 
@@ -45,8 +55,6 @@ object NavDataState {
     @Volatile private var accessRemainDist: Int = 0
     @Volatile private var accessSpeedKmh: Int = 0
     @Volatile private var accessAngle: Int = 0
-    @Volatile private var accessAngleConfident: Boolean = false
-    @Volatile private var accessAngleConfidentAt: Long = 0L
     @Volatile private var accessAt: Long = 0L
 
     @Volatile private var notifTurn: Int? = null
@@ -83,10 +91,17 @@ object NavDataState {
         scheduleSend()
     }
 
-    /** Called by NavNotificationListener whenever it resolves an icon hash. */
-    fun updateIcon(learnedTurn: Int?, learnedAngle: Int?) {
+    /**
+     * Called by NavNotificationListener whenever it resolves an icon hash.
+     * bitmapBytes is the actual icon pixels (IconBitmapConverter output),
+     * non-null only when this update came from a roundabout icon - it's
+     * what actually gets drawn on the ESP32 now, with learnedAngle kept
+     * only as a fallback for the one frame before a bitmap has arrived.
+     */
+    fun updateIcon(learnedTurn: Int?, learnedAngle: Int?, bitmapBytes: ByteArray? = null) {
         iconTurn = learnedTurn
         iconAngle = learnedAngle
+        iconBitmapBytes = bitmapBytes
         scheduleSend()
     }
 
@@ -120,24 +135,9 @@ object NavDataState {
         accessRemainDist = remainDist
         accessSpeedKmh = speedKmh
         accessAngle = roundaboutAngleDeg
-        accessAngleConfident = angleConfident
-        if (angleConfident) accessAngleConfidentAt = System.currentTimeMillis()
         accessInstruction = instruction
         accessAt = System.currentTimeMillis()
         scheduleSend()
-    }
-
-    /**
-     * Returns the current roundabout angle only if it was just derived
-     * confidently (an exact "Nth exit" match, not a straight/left/right/
-     * generic fallback guess) and recently enough to plausibly be for the
-     * same maneuver the notification listener is looking at right now.
-     * Used to teach IconLearner's angle map — see its class doc.
-     */
-    fun confidentAngleIfFresh(withinMs: Long = 2000L): Int? {
-        if (!accessAngleConfident) return null
-        if (System.currentTimeMillis() - accessAngleConfidentAt > withinMs) return null
-        return accessAngle
     }
 
     // Coalesce updates landing within COALESCE_MS of each other into one
@@ -196,12 +196,19 @@ object NavDataState {
         // pass (confident or not) if the icon hasn't taught us this one yet.
         val angleDeg = iconAngle ?: accessAngle
 
+        // Only attach the actual icon pixels when the resolved turn is a
+        // roundabout code - for every other turn the ESP32's vector icons
+        // already work fine (per user), so there's no reason to spend BLE
+        // bandwidth on a bitmap that code path never reads.
+        val bitmapToSend = if ((turn == 9 || turn == 10)) iconBitmapBytes else null
+
         val packet = buildPacket(
             turn, distToTurn, accessTotalDist, accessRemainDist,
-            speedKmh, angleDeg, instruction
+            speedKmh, angleDeg, instruction, bitmapToSend
         )
 
-        val signature = "$turn|$distToTurn|$accessRemainDist|$speedKmh|$angleDeg|$instruction"
+        val signature = "$turn|$distToTurn|$accessRemainDist|$speedKmh|$angleDeg|$instruction|" +
+            "${bitmapToSend?.contentHashCode()}"
         lastPacket = packet // heartbeat resends this even if signature is unchanged
         if (signature == lastSentSignature) return
         lastSentSignature = signature
@@ -209,11 +216,23 @@ object NavDataState {
         NavLog.post(
             "MERGED -> turn=$turn (via $turnSource) dist=${distToTurn}m " +
                 "speed=${speedKmh}kmh (gps=${GpsSpeedProvider.currentSpeedKmhOrNull()}) " +
-                "angle=${angleDeg}deg (icon=${iconAngle}) remain=${accessRemainDist}m instr='$instruction'"
+                "angle=${angleDeg}deg icon=${if (bitmapToSend != null) "bitmap(${bitmapToSend.size}B)" else "none"} " +
+                "remain=${accessRemainDist}m instr='$instruction'"
         )
         BleNavClient.sendNavBytes(packet)
     }
 
+    // Packet layout (v2 - see main.cpp onNavPacket for the matching parser):
+    //   byte 0   : turn code
+    //   byte 1-2 : distance to next turn, uint16 BE, metres
+    //   byte 3-4 : total journey distance, uint16 BE, metres
+    //   byte 5-6 : remaining journey distance, uint16 BE, metres
+    //   byte 7   : speed km/h
+    //   byte 8   : roundabout angle, 0-360deg mapped to 0-255 (fallback only,
+    //              used for the one frame before a bitmap has arrived)
+    //   byte 9   : iconFlag - 1 if a 32x32 1bpp bitmap follows, else 0
+    //   [byte 10..137: 128-byte packed XBM bitmap, only if iconFlag==1]
+    //   remaining bytes: ASCII instruction text
     private fun buildPacket(
         turn: Int,
         distToTurn: Int,
@@ -221,13 +240,18 @@ object NavDataState {
         remainDist: Int,
         speedKmh: Int,
         roundaboutAngleDeg: Int,
-        instruction: String
+        instruction: String,
+        iconBitmap: ByteArray?
     ): ByteArray {
         // ASCII-only, ESP32 font/display constraint — see main.cpp.
         var textBytes = instruction.filter { it.code in 0x20..0x7E }.toByteArray(Charsets.US_ASCII)
         if (textBytes.size > 60) textBytes = textBytes.copyOf(60)
 
-        val buf = ByteArray(9 + textBytes.size)
+        val hasIcon = iconBitmap != null && iconBitmap.size == IconBitmapConverter.PACKED_SIZE
+        val headerSize = 10 // bytes 0..9
+        val iconSize = if (hasIcon) IconBitmapConverter.PACKED_SIZE else 0
+
+        val buf = ByteArray(headerSize + iconSize + textBytes.size)
         buf[0] = turn.toByte()
         buf[1] = ((distToTurn shr 8) and 0xFF).toByte()
         buf[2] = (distToTurn and 0xFF).toByte()
@@ -237,7 +261,14 @@ object NavDataState {
         buf[6] = (remainDist and 0xFF).toByte()
         buf[7] = speedKmh.coerceIn(0, 255).toByte()
         buf[8] = ((roundaboutAngleDeg.coerceIn(0, 360) * 255) / 360).toByte()
-        textBytes.copyInto(buf, 9)
+        buf[9] = if (hasIcon) 1 else 0
+
+        var offset = headerSize
+        if (hasIcon) {
+            iconBitmap!!.copyInto(buf, offset)
+            offset += iconSize
+        }
+        textBytes.copyInto(buf, offset)
         return buf
     }
 
@@ -245,6 +276,7 @@ object NavDataState {
     fun reset() {
         iconTurn = null
         iconAngle = null
+        iconBitmapBytes = null
         accessTurn = null
         notifTurn = null
         lastSentSignature = null

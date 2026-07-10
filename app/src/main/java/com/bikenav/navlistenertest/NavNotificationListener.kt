@@ -203,34 +203,41 @@ class NavNotificationListener : NotificationListenerService() {
         // every notification, resolve the icon hash and let NavDataState
         // prefer that resolution over both text-based reads.
         val iconBitmap = IconExtractor.extract(this, sbn)
-        val iconHash = iconBitmap?.let { bmp ->
-            val h = IconHasher.dHash(bmp)
-            bmp.recycle()
-            h
-        }
+        val iconHash = iconBitmap?.let { IconHasher.dHash(it) }
         val textIsConfident = maneuver != ManeuverType.UNKNOWN
         if (iconHash != null && textIsConfident) {
             IconLearner.learn(iconHash, maneuver.toFirmwareTurnCode())
         }
         val iconResolvedTurn = iconHash?.let { IconLearner.lookup(it) }
 
-        // Roundabout exit angle: teach this icon's hash its exact exit
-        // angle whenever accessibility JUST confidently derived one (an
-        // actual "2nd exit" match, not a generic straight/left/right
-        // fallback guess) — see NavDataState.confidentAngleIfFresh(). Once
-        // learned, this icon's angle is recognized even on a later pass
-        // where the exit-number text isn't in view/isn't matched.
+        // Roundabout exit angle: measured directly from this icon's actual
+        // pixels every time (IconAngleAnalyzer), not learned from text or
+        // looked up via a coarse 64-bit hash. A hash shrinks the icon to
+        // 9x8 before comparing, which is fine for telling a left arrow from
+        // a right arrow (very different shapes) but nowhere near precise
+        // enough to tell a 2nd-exit roundabout icon from a 3rd-exit one —
+        // that's exactly the "wrong turn only in the circle" symptom. See
+        // IconAngleAnalyzer's class doc for the full explanation and method.
         val isRoundaboutIcon = maneuver == ManeuverType.ROUNDABOUT_LEFT ||
             maneuver == ManeuverType.ROUNDABOUT_RIGHT ||
             maneuver == ManeuverType.EXIT_ROUNDABOUT_LEFT ||
-            maneuver == ManeuverType.EXIT_ROUNDABOUT_RIGHT
-        if (iconHash != null && isRoundaboutIcon) {
-            NavDataState.confidentAngleIfFresh()?.let { angle ->
-                IconLearner.learnAngle(iconHash, angle)
-            }
-        }
-        val iconResolvedAngle = iconHash?.let { IconLearner.lookupAngle(it) }
-        NavDataState.updateIcon(iconResolvedTurn, iconResolvedAngle)
+            maneuver == ManeuverType.EXIT_ROUNDABOUT_RIGHT ||
+            iconResolvedTurn == 9 || iconResolvedTurn == 10
+        val iconResolvedAngle = if (iconBitmap != null && isRoundaboutIcon) {
+            IconAngleAnalyzer.analyzeExitAngle(iconBitmap)
+        } else null
+
+        // Ground truth for the ESP32's roundabout display: the actual icon
+        // pixels Maps drew, downscaled/thresholded to what the OLED can
+        // show directly (see IconBitmapConverter doc for why this replaces
+        // angle computation entirely — same approach as maisonsmd's
+        // esp32-google-maps project). iconResolvedAngle above is kept only
+        // as a one-frame fallback in NavDataState for before this arrives.
+        val iconBitmapBytes = if (iconBitmap != null && isRoundaboutIcon) {
+            IconBitmapConverter.toXbmBytes(iconBitmap)
+        } else null
+        iconBitmap?.recycle()
+        NavDataState.updateIcon(iconResolvedTurn, iconResolvedAngle, iconBitmapBytes)
 
         val turnCode = if (textIsConfident) maneuver.toFirmwareTurnCode() else null
         NavLog.post(
