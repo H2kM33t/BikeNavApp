@@ -60,6 +60,12 @@ object NavDataState {
     @Volatile private var notifTurn: Int? = null
     @Volatile private var notifInstruction: String = ""
     @Volatile private var notifDistToTurn: Int = 0
+    // Total remaining trip distance parsed from the notification's
+    // "header_text" view ("12 min · 3.4 mi · 2:45 PM ETA" -> middle field),
+    // the same source maisonsmd's GMapsNotification uses for this. Backs up
+    // accessRemainDist below for when the accessibility tree scrape comes
+    // back empty (e.g. rural roads where that view doesn't always render).
+    @Volatile private var notifRemainDist: Int = 0
     @Volatile private var notifAt: Long = 0L
 
     private var lastSentSignature: String? = null
@@ -108,12 +114,15 @@ object NavDataState {
     /**
      * Called by NavNotificationListener with its own text-based read.
      * turnCode is null when the text classifier was UNKNOWN/ambiguous, so it
-     * doesn't outrank a real accessibility or icon result.
+     * doesn't outrank a real accessibility or icon result. remainDist is
+     * parsed from the notification's "header_text" ETA line (0 if
+     * unavailable) and only used as a fallback - see notifRemainDist doc.
      */
-    fun updateFromNotification(turnCode: Int?, distToTurn: Int, instruction: String) {
+    fun updateFromNotification(turnCode: Int?, distToTurn: Int, instruction: String, remainDist: Int = 0) {
         notifTurn = turnCode
         notifDistToTurn = distToTurn
         notifInstruction = instruction
+        notifRemainDist = remainDist
         notifAt = System.currentTimeMillis()
         scheduleSend()
     }
@@ -196,18 +205,25 @@ object NavDataState {
         // pass (confident or not) if the icon hasn't taught us this one yet.
         val angleDeg = iconAngle ?: accessAngle
 
-        // Only attach the actual icon pixels when the resolved turn is a
-        // roundabout code - for every other turn the ESP32's vector icons
-        // already work fine (per user), so there's no reason to spend BLE
-        // bandwidth on a bitmap that code path never reads.
-        val bitmapToSend = if ((turn == 9 || turn == 10)) iconBitmapBytes else null
+        // Remaining trip distance: accessibility's tree-scraped figure is
+        // preferred (unrounded, precise), but on rural roads that view
+        // sometimes doesn't render at all and accessRemainDist sits at 0.
+        // Fall back to the notification's "header_text" ETA line reading
+        // in that case, same source Mason's app uses for this figure.
+        val remainDist = if (accessRemainDist > 0) accessRemainDist else notifRemainDist
+
+        // Attach the actual icon pixels whenever we have them, for any
+        // turn type - not just roundabouts. The ESP32 now prefers this
+        // bitmap over its own vector icon for every turn, falling back to
+        // the vector icon only when no bitmap is available yet.
+        val bitmapToSend = iconBitmapBytes
 
         val packet = buildPacket(
-            turn, distToTurn, accessTotalDist, accessRemainDist,
+            turn, distToTurn, accessTotalDist, remainDist,
             speedKmh, angleDeg, instruction, bitmapToSend
         )
 
-        val signature = "$turn|$distToTurn|$accessRemainDist|$speedKmh|$angleDeg|$instruction|" +
+        val signature = "$turn|$distToTurn|$remainDist|$speedKmh|$angleDeg|$instruction|" +
             "${bitmapToSend?.contentHashCode()}"
         lastPacket = packet // heartbeat resends this even if signature is unchanged
         if (signature == lastSentSignature) return
@@ -217,7 +233,7 @@ object NavDataState {
             "MERGED -> turn=$turn (via $turnSource) dist=${distToTurn}m " +
                 "speed=${speedKmh}kmh (gps=${GpsSpeedProvider.currentSpeedKmhOrNull()}) " +
                 "angle=${angleDeg}deg icon=${if (bitmapToSend != null) "bitmap(${bitmapToSend.size}B)" else "none"} " +
-                "remain=${accessRemainDist}m instr='$instruction'"
+                "remain=${remainDist}m (access=${accessRemainDist}m notif=${notifRemainDist}m) instr='$instruction'"
         )
         BleNavClient.sendNavBytes(packet)
     }
@@ -279,6 +295,7 @@ object NavDataState {
         iconBitmapBytes = null
         accessTurn = null
         notifTurn = null
+        notifRemainDist = 0
         lastSentSignature = null
         lastPacket = null
     }

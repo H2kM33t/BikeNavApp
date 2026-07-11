@@ -115,10 +115,23 @@ class NavNotificationListener : NotificationListenerService() {
     // the title, e.g. "100 m · Turn right onto..." or "1.2 km · Turn left...".
     // The separator between distance and instruction varies (·, -, or just
     // whitespace), so we only anchor on the distance+unit part itself.
+    // Used both against EXTRA_TITLE (fallback path) and standalone against
+    // the RemoteViews "title" text (primary path, e.g. just "500 ft").
     private val leadingDistanceRegex = Regex(
         """^\s*(\d+(?:\.\d+)?)\s*(m|km|ft|mi)\b[^A-Za-z]*""",
         RegexOption.IGNORE_CASE
     )
+
+    private fun parseDistanceMetres(text: String): Int? {
+        val m = leadingDistanceRegex.find(text) ?: return null
+        val value = m.groupValues[1].toFloatOrNull() ?: return null
+        return when (m.groupValues[2].lowercase()) {
+            "km" -> (value * 1000f)
+            "mi" -> (value * 1609.34f)
+            "ft" -> (value * 0.3048f)
+            else -> value // "m"
+        }.toInt().coerceIn(0, 65535)
+    }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         if (sbn.packageName != "com.google.android.apps.maps") return
@@ -132,8 +145,16 @@ class NavNotificationListener : NotificationListenerService() {
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty()
 
+        // Read the actual rendered "title" view out of the notification's
+        // own RemoteViews (see GMapsRemoteViewParser doc for why this is
+        // more reliable than EXTRA_TITLE, especially on long rural
+        // stretches where EXTRA_TITLE sometimes carries no distance number
+        // at all even though the on-screen notification clearly shows one).
+        val remoteFields = GMapsRemoteViewParser.parse(this, sbn)
+
         NavLog.post(
-            "Parsed -> title='$title' text='$text' bigText='$bigText' subText='$subText'"
+            "Parsed -> title='$title' text='$text' bigText='$bigText' subText='$subText' " +
+                "remoteTitle='${remoteFields?.titleText}'"
         )
 
         if (title.isBlank()) {
@@ -141,21 +162,24 @@ class NavNotificationListener : NotificationListenerService() {
             return
         }
 
-        // Pull the leading "100 m · " / "1.2 km · " distance prefix out of
-        // the title before classifying, so keyword matching runs on the
-        // instruction alone, and so we can actually populate the packet's
-        // distance field instead of leaving it at 0.
-        val distanceMatch = leadingDistanceRegex.find(title)
-        val distanceMetres = distanceMatch?.let { m ->
-            val value = m.groupValues[1].toFloatOrNull() ?: 0f
-            when (m.groupValues[2].lowercase()) {
-                "km" -> (value * 1000f)
-                "mi" -> (value * 1609.34f)
-                "ft" -> (value * 0.3048f)
-                else -> value // "m"
-            }.toInt().coerceIn(0, 65535)
-        } ?: 0
+        // distanceMetres: prefer the "title" view parsed above (more
+        // reliable, see comment at the top of this function), fall back to
+        // pulling the leading distance chunk out of EXTRA_TITLE.
+        //
+        // Deliberately NOT using remoteFields.directionText for the
+        // instruction/maneuver text below: on this notification layout
+        // "text" appears to hold just the road name with no "turn right
+        // onto..." phrasing, and classifyManeuver() depends on that
+        // phrasing being present. EXTRA_TITLE already carries the full
+        // "<distance> · <maneuver phrase>" string reliably for
+        // classification purposes - it's specifically the distance number
+        // within it that sometimes goes missing, which is the one piece
+        // this pulls from the more reliable source instead.
+        val distanceMetres = remoteFields?.titleText?.let { parseDistanceMetres(it) }
+            ?: parseDistanceMetres(title)
+            ?: 0
 
+        val distanceMatch = leadingDistanceRegex.find(title)
         val titleWithoutDistance = if (distanceMatch != null) {
             title.substring(distanceMatch.range.last + 1)
         } else {
@@ -227,15 +251,15 @@ class NavNotificationListener : NotificationListenerService() {
             IconAngleAnalyzer.analyzeExitAngle(iconBitmap)
         } else null
 
-        // Ground truth for the ESP32's roundabout display: the actual icon
-        // pixels Maps drew, downscaled/thresholded to what the OLED can
-        // show directly (see IconBitmapConverter doc for why this replaces
-        // angle computation entirely — same approach as maisonsmd's
-        // esp32-google-maps project). iconResolvedAngle above is kept only
-        // as a one-frame fallback in NavDataState for before this arrives.
-        val iconBitmapBytes = if (iconBitmap != null && isRoundaboutIcon) {
-            IconBitmapConverter.toXbmBytes(iconBitmap)
-        } else null
+        // Ground truth for the ESP32's icon display: the actual icon pixels
+        // Maps drew, downscaled/thresholded to what the OLED can show
+        // directly (see IconBitmapConverter doc). This now covers every
+        // turn type, not just roundabouts - same approach as maisonsmd's
+        // esp32-google-maps project, which never classifies turns into
+        // codes at all and just forwards whatever icon Maps rendered.
+        // iconResolvedAngle above remains a roundabout-only fallback for
+        // the one frame before a bitmap has arrived.
+        val iconBitmapBytes = iconBitmap?.let { IconBitmapConverter.toXbmBytes(it) }
         iconBitmap?.recycle()
         NavDataState.updateIcon(iconResolvedTurn, iconResolvedAngle, iconBitmapBytes)
 
@@ -244,7 +268,14 @@ class NavNotificationListener : NotificationListenerService() {
             "Notification read -> textTurn=$turnCode iconTurn=$iconResolvedTurn iconAngle=$iconResolvedAngle " +
                 "distance=${distanceMetres}m instruction='$instruction'"
         )
-        NavDataState.updateFromNotification(turnCode, distanceMetres, instruction)
+        // Total remaining trip distance, parsed from the notification's
+        // "header_text" ETA line via the same reliable RemoteViews read
+        // used for distanceMetres above - falls back to 0 (meaning
+        // NavDataState uses the accessibility-tree figure instead) if this
+        // notification's header_text isn't in the expected 3-part format.
+        val notifRemainDist = remoteFields?.etaDistanceText?.let { parseDistanceMetres(it) } ?: 0
+
+        NavDataState.updateFromNotification(turnCode, distanceMetres, instruction, notifRemainDist)
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
