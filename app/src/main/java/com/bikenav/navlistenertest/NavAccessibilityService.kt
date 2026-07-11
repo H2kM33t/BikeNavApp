@@ -148,8 +148,18 @@ class NavAccessibilityService : AccessibilityService() {
             """^at\s+(?!the\s+roundabout|the\s+traffic\s+circle)""",
             RegexOption.IGNORE_CASE
         )
+        // Maneuver-node selection is deliberately NOT gated on this node
+        // itself containing a distance match. Google Maps sometimes drops
+        // the "in X ft" phrase from the live banner for a frame or two
+        // right as you approach a turn (<~40m), and requiring it here used
+        // to make candidatesRaw come back empty in that moment -
+        // instructionNode became null, the whole event was discarded via
+        // the early return below, and NOTHING overwrote the last good
+        // value - which is exactly why the display looked "stuck" at
+        // whatever distance was last successfully parsed. Mirrors Mason's
+        // approach of never coupling maneuver-text detection to distance
+        // being present - it's a decoupled field on his fully.
         val candidatesRaw = allNodes
-            .filter { distanceRegex.containsMatchIn(it.text) }
             .filterNot { it.text.trim().startsWith("then ", ignoreCase = true) }
             .filter { node -> turnVerbs.any { node.text.contains(it, ignoreCase = true) } }
         val nonLandmark = candidatesRaw.filterNot { landmarkNarrationRegex.containsMatchIn(it.text.trim()) }
@@ -174,8 +184,17 @@ class NavAccessibilityService : AccessibilityService() {
 
         if (instructionNode == null) return
 
-        // Parse distance to next turn
+        // Parse distance to next turn. Try the maneuver node itself first
+        // (usual case), but if Maps dropped the "in X ft" phrase from it
+        // this pass, fall back to whatever node anywhere in the tree DOES
+        // have one - same decoupled-field idea as above, so a distance
+        // reading from elsewhere on screen still gets through instead of
+        // silently becoming 0 (which would look just as "stuck"/wrong on
+        // the display as not updating at all).
         val distanceMatch = distanceRegex.find(instructionNode)
+            ?: allNodes.filter { distanceRegex.containsMatchIn(it.text) }
+                .minByOrNull { it.top }
+                ?.let { distanceRegex.find(it.text) }
         val distanceValue = distanceMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
         val distanceUnit = distanceMatch?.groupValues?.get(2) ?: "m"
         val distanceMetres = toMetres(distanceValue, distanceUnit)

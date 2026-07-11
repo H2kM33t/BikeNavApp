@@ -205,6 +205,14 @@ object NavDataState {
         // pass (confident or not) if the icon hasn't taught us this one yet.
         val angleDeg = iconAngle ?: accessAngle
 
+        // Total distance: accessTotalDist is sourced from the same
+        // accessibility regex as accessRemainDist (Maps' notification
+        // doesn't expose a separate "distance since start" figure, so both
+        // legitimately track trip-remaining-distance) and can likewise sit
+        // at 0 if that regex doesn't match this Maps version's phrasing.
+        // Same header_text-based fallback as remainDist below.
+        val totalDist = if (accessTotalDist > 0) accessTotalDist else notifRemainDist
+
         // Remaining trip distance: accessibility's tree-scraped figure is
         // preferred (unrounded, precise), but on rural roads that view
         // sometimes doesn't render at all and accessRemainDist sits at 0.
@@ -219,11 +227,11 @@ object NavDataState {
         val bitmapToSend = iconBitmapBytes
 
         val packet = buildPacket(
-            turn, distToTurn, accessTotalDist, remainDist,
+            turn, distToTurn, totalDist, remainDist,
             speedKmh, angleDeg, instruction, bitmapToSend
         )
 
-        val signature = "$turn|$distToTurn|$remainDist|$speedKmh|$angleDeg|$instruction|" +
+        val signature = "$turn|$distToTurn|$totalDist|$remainDist|$speedKmh|$angleDeg|$instruction|" +
             "${bitmapToSend?.contentHashCode()}"
         lastPacket = packet // heartbeat resends this even if signature is unchanged
         if (signature == lastSentSignature) return
