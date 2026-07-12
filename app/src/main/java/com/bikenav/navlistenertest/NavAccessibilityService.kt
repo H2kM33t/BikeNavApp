@@ -305,12 +305,13 @@ class NavAccessibilityService : AccessibilityService() {
         val leadPhrase = lower.substringBefore(" toward ")
             .substringBefore(" onto ")
             .trim()
-        // Codes match the firmware's TurnCode enum (main.cpp / TurnShowcase, 0-15):
+        // Codes match the firmware's TurnCode enum (main.cpp / TurnShowcase, 0-16):
         //   0=STRAIGHT 1=LEFT 2=RIGHT 3=SLIGHT_LEFT 4=SLIGHT_RIGHT
         //   5=SHARP_LEFT 6=SHARP_RIGHT 7=UTURN_LEFT 8=UTURN_RIGHT
         //   9=ROUNDABOUT_LEFT 10=ROUNDABOUT_RIGHT 11=MERGE
-        //   12=FORK_LEFT 13=FORK_RIGHT 14=RAMP_LEFT 15=RAMP_RIGHT
+        //   12=FORK_LEFT 13=FORK_RIGHT 14=RAMP_LEFT 15=RAMP_RIGHT 16=ARRIVED
         return when {
+            leadPhrase.contains("arrive") -> 16
             (leadPhrase.contains("u-turn") || leadPhrase.contains("uturn")) &&
                     leadPhrase.contains("right") -> 8
             leadPhrase.contains("u-turn") || leadPhrase.contains("uturn") -> 7

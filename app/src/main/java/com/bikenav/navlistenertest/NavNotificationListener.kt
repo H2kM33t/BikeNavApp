@@ -58,11 +58,11 @@ enum class ManeuverType {
 
     /**
      * Maps down to the firmware's TurnCode enum (main.cpp / TurnShowcase),
-     * which supports codes 0-15:
+     * which supports codes 0-16:
      *   0=STRAIGHT 1=LEFT 2=RIGHT 3=SLIGHT_LEFT 4=SLIGHT_RIGHT
      *   5=SHARP_LEFT 6=SHARP_RIGHT 7=UTURN_LEFT 8=UTURN_RIGHT
      *   9=ROUNDABOUT_LEFT 10=ROUNDABOUT_RIGHT 11=MERGE
-     *   12=FORK_LEFT 13=FORK_RIGHT 14=RAMP_LEFT 15=RAMP_RIGHT
+     *   12=FORK_LEFT 13=FORK_RIGHT 14=RAMP_LEFT 15=RAMP_RIGHT 16=ARRIVED
      */
     fun toFirmwareTurnCode(): Int = when (this) {
         TURN_LEFT -> 1
@@ -80,9 +80,10 @@ enum class ManeuverType {
         FORK_RIGHT -> 13
         RAMP_LEFT -> 14
         RAMP_RIGHT -> 15
-        // Everything else (take exit, ferry, head-toward, continue,
-        // arrive, start, unknown) has no dedicated firmware icon yet, so it
-        // falls back to the straight-ahead arrow rather than being dropped.
+        ARRIVE -> 16
+        // Everything else (take exit, ferry, head-toward, continue, start,
+        // unknown) has no dedicated firmware icon yet, so it falls back to
+        // the straight-ahead arrow rather than being dropped.
         else -> 0
     }
 }
