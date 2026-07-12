@@ -456,6 +456,18 @@ object BleNavClient {
     }
 
     @SuppressLint("MissingPermission")
+    /**
+     * Clears the cached last-known nav payload so a future reconnect has
+     * nothing stale to replay. Call this when navigation has genuinely
+     * ended (Maps notification removed) - NOT on every disconnect, since a
+     * mid-ride BLE drop should still replay the last state on reconnect
+     * (that's the whole point of the reconnect-replay behavior below).
+     */
+    fun clearLastKnownNav() {
+        lastKnownNavText = null
+        lastKnownNavBytes = null
+    }
+
     fun disconnect() {
         manualDisconnect = true
         handler.removeCallbacksAndMessages(null)

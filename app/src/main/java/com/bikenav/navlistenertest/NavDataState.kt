@@ -306,5 +306,12 @@ object NavDataState {
         notifRemainDist = 0
         lastSentSignature = null
         lastPacket = null
+        // Without this, BleNavClient's own cached copy (kept separately so
+        // it can replay on a mid-ride BLE reconnect) survives navigation
+        // ending entirely - so disconnecting and reconnecting AFTER closing
+        // Maps would still replay the last real turn/distance as if nav
+        // were still active. This makes "nav genuinely ended" also mean
+        // "nothing stale left to replay."
+        BleNavClient.clearLastKnownNav()
     }
 }
