@@ -25,6 +25,20 @@ import android.widget.TextView
  */
 object GMapsRemoteViewParser {
 
+    // Matches a bare "<number> <unit>" value with nothing else meaningful
+    // around it - e.g. "3.4 mi" or "500 m" - used to pick the distance part
+    // out of header_text without caring which position it's in. Deliberately
+    // requires a word boundary after the unit so "10 min" (duration) never
+    // matches on the "m" in "min".
+    private val standaloneDistanceRegex = Regex(
+        """^\s*\d+\.?\d*\s*(?:km|mi|m|ft)\b\s*$""",
+        RegexOption.IGNORE_CASE
+    )
+    private val looseDistanceRegex = Regex(
+        """\d+\.?\d*\s*(?:km|mi|m|ft)\b""",
+        RegexOption.IGNORE_CASE
+    )
+
     data class ParsedFields(
         val titleText: String?,     // "title" view - distance to next turn alone, e.g. "500 ft"
         val directionText: String?, // "text" view - road name + description
@@ -44,10 +58,26 @@ object GMapsRemoteViewParser {
             val headerText = (findChildByEntryName(context, root, "header_text") as? TextView)
                 ?.text?.toString()
 
-            // header_text is "<duration> · <distance remaining> · <ETA>ETA"
-            val etaDistanceText = headerText?.split("\u00B7")?.let { parts ->
-                if (parts.size == 3) parts[1].trim() else null
-            }
+            // header_text is normally "<duration> · <distance remaining> ·
+            // <ETA>ETA" (3 parts), but requiring exactly 3 parts turned out
+            // to be too strict - on rural stretches (GPS reacquisition,
+            // long stretches with no imminent turn, etc.) Maps can render
+            // this with 2 parts (e.g. no ETA clock time shown) or otherwise
+            // reshuffled, and the old code just gave up entirely whenever
+            // the count wasn't exactly 3. Instead, scan whatever parts ARE
+            // present and take whichever one actually looks like a
+			// standalone distance value ("3.4 mi", not "12 min" or
+            // "2:45 PM") - order/count no longer matters.
+            val etaDistanceText = headerText?.split("\u00B7")
+                ?.map { it.trim() }
+                ?.firstOrNull { part ->
+                    standaloneDistanceRegex.matches(part) ||
+                        (looseDistanceRegex.containsMatchIn(part) && ":" !in part)
+                }
+                // Last resort: header_text had no "·" separators at all (a
+                // degraded/rural rendering state) - just grab any distance
+                // number anywhere in the raw string.
+                ?: headerText?.let { looseDistanceRegex.find(it)?.value }
 
             ParsedFields(
                 titleText = titleText?.ifBlank { null },
