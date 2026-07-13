@@ -10,7 +10,12 @@ class NavAccessibilityService : AccessibilityService() {
     // the RAW log), not metric. The old regex only matched m/km, so it
     // never matched at all here, leaving distance stuck at 0 and the
     // "in 100 ft" suffix never stripped from the instruction text.
-    private val distanceRegex = Regex("""in (\d+\.?\d*)\s*(m|km|ft|mi)\b""", RegexOption.IGNORE_CASE)
+    // "in " prefix is optional: confirmed from a real device log that Maps
+    // sometimes phrases this as "40 meters, Turn left" (or just "40 m")
+    // with no "in" at all, not just "in 40 m" - the old version requiring
+    // "in " literally never matched that phrasing, so distance silently
+    // stayed 0 whenever Maps used it.
+    private val distanceRegex = Regex("""(?:in\s+)?(\d+\.?\d*)\s*(m|km|ft|mi)\b""", RegexOption.IGNORE_CASE)
     private val speedRegex = Regex("""(\d+)\s*(?:kilometres per hour|km/h|kmh|mph)""")
     // Broadened: the old regex only matched the literal phrase
     // "Distance remaining is X km", which Maps' real accessibility text
