@@ -49,6 +49,19 @@ object BleNavClient {
     private const val HEARTBEAT_INTERVAL_MS = 4_000L
     private var heartbeatRunning = false
 
+    // Active link-health probe, borrowed from navHUD's BleManager approach:
+    // periodically call readRemoteRssi() while "connected" and treat a
+    // failed call/callback as an implicit disconnect. Android's own
+    // onConnectionStateChange(STATE_DISCONNECTED) callback doesn't always
+    // fire promptly (or at all) for a silently-dropped link — e.g. the
+    // ESP32 loses power or drifts out of range without a clean LL
+    // termination — so without this the app can sit in a "Connected" UI
+    // state indefinitely while writes silently go nowhere. Distinct from
+    // startHeartbeat() above, which resends *data* on a timer but never
+    // itself checks whether the write actually reached the peer.
+    private const val KEEP_ALIVE_INTERVAL_MS = 8_000L
+    private var keepAliveRunning = false
+
     private var bluetoothGatt: BluetoothGatt? = null
     private var navCharacteristic: BluetoothGattCharacteristic? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -278,6 +291,8 @@ object BleNavClient {
                 bluetoothGatt = null
                 navCharacteristic = null
                 state = BleState.DISCONNECTED
+                heartbeatRunning = false
+                keepAliveRunning = false
                 maybeScheduleReconnect()
                 return
             }
@@ -316,6 +331,7 @@ object BleNavClient {
                 gatt.close()
                 bluetoothGatt = null
                 heartbeatRunning = false
+                keepAliveRunning = false
                 maybeScheduleReconnect()
             }
         }
@@ -339,6 +355,7 @@ object BleNavClient {
                 lastKnownNavText?.let { sendNavText(it) }
                 lastKnownNavBytes?.let { sendNavBytes(it) }
                 startHeartbeat()
+                startKeepAlive()
             }
         }
 
@@ -349,6 +366,19 @@ object BleNavClient {
         ) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Log.e(TAG, "Write failed: $status")
+            }
+        }
+
+        // Keep-alive probe result (see startKeepAlive()). A successful read
+        // just confirms the link is alive and the loop continues on its own
+        // schedule; a failure means the peer isn't actually reachable even
+        // though the OS still reports STATE_CONNECTED, so treat it the same
+        // as a GATT error and fall through to reconnect backoff.
+        override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                Log.w(TAG, "Keep-alive RSSI read failed (status=$status) — assuming disconnection")
+                keepAliveRunning = false
+                forceDisconnectAndRetry()
             }
         }
     }
@@ -395,6 +425,53 @@ object BleNavClient {
             }
         }
         handler.postDelayed(tick, HEARTBEAT_INTERVAL_MS)
+    }
+
+    /**
+     * Starts (if not already running) a loop that reads RSSI every
+     * KEEP_ALIVE_INTERVAL_MS as a cheap round-trip probe of the link.
+     * onReadRemoteRssi (in gattCallback) is what actually acts on a failed
+     * probe. Self-terminates once keepAliveRunning is flipped false by a
+     * disconnect, same pattern as startHeartbeat().
+     */
+    @SuppressLint("MissingPermission")
+    private fun startKeepAlive() {
+        if (keepAliveRunning) return
+        keepAliveRunning = true
+        val tick = object : Runnable {
+            override fun run() {
+                if (!keepAliveRunning || state != BleState.CONNECTED) {
+                    keepAliveRunning = false
+                    return
+                }
+                val gatt = bluetoothGatt
+                if (gatt == null || gatt.readRemoteRssi() == false) {
+                    Log.w(TAG, "Keep-alive: readRemoteRssi() call failed immediately — forcing disconnect")
+                    keepAliveRunning = false
+                    forceDisconnectAndRetry()
+                    return
+                }
+                handler.postDelayed(this, KEEP_ALIVE_INTERVAL_MS)
+            }
+        }
+        handler.postDelayed(tick, KEEP_ALIVE_INTERVAL_MS)
+    }
+
+    /**
+     * Tears down a link that looks alive at the OS callback level but has
+     * failed our own health probe, then falls through to the normal
+     * reconnect backoff — same recovery path as a GATT error in
+     * onConnectionStateChange.
+     */
+    @SuppressLint("MissingPermission")
+    private fun forceDisconnectAndRetry() {
+        heartbeatRunning = false
+        val gatt = bluetoothGatt
+        bluetoothGatt = null
+        navCharacteristic = null
+        state = BleState.DISCONNECTED
+        gatt?.close()
+        maybeScheduleReconnect()
     }
 
     // Text-based send (used by notification listener fallback)
@@ -471,6 +548,8 @@ object BleNavClient {
     fun disconnect() {
         manualDisconnect = true
         handler.removeCallbacksAndMessages(null)
+        heartbeatRunning = false
+        keepAliveRunning = false
 
         val gatt = bluetoothGatt
         if (gatt == null) {
