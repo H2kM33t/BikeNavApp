@@ -64,6 +64,7 @@ object BleNavClient {
 
     private var bluetoothGatt: BluetoothGatt? = null
     private var navCharacteristic: BluetoothGattCharacteristic? = null
+    private var themeCharacteristic: BluetoothGattCharacteristic? = null
     private val handler = Handler(Looper.getMainLooper())
     private var pendingWrite: String? = null
     private var pendingBytes: ByteArray? = null
@@ -80,6 +81,16 @@ object BleNavClient {
      */
     private var lastKnownNavText: String? = null
     private var lastKnownNavBytes: ByteArray? = null
+
+    /**
+     * Last theme the user picked (dark/light), mirrored to the ESP32 display.
+     * Set from MainActivity on launch based on the persisted Prefs value, and
+     * updated whenever the user flips the setting. Resent on every
+     * (re)connect below, same reasoning as lastKnownNavBytes above — so a
+     * BLE drop or a firmware reboot doesn't silently reset the display back
+     * to dark.
+     */
+    var lastKnownLightMode: Boolean = false
 
     /** Set from MainActivity based on the persisted setting. Defaults to on. */
     var autoReconnectEnabled: Boolean = true
@@ -290,6 +301,7 @@ object BleNavClient {
                 gatt.close()
                 bluetoothGatt = null
                 navCharacteristic = null
+                themeCharacteristic = null
                 state = BleState.DISCONNECTED
                 heartbeatRunning = false
                 keepAliveRunning = false
@@ -321,6 +333,7 @@ object BleNavClient {
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 state = BleState.DISCONNECTED
                 navCharacteristic = null
+                themeCharacteristic = null
                 heartbeatRunning = false
                 // Only close() here — never earlier. Calling close() before
                 // this callback fires (e.g. right after disconnect()) is what
@@ -345,6 +358,7 @@ object BleNavClient {
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             val service = gatt.getService(BleUuids.SERVICE_UUID)
             navCharacteristic = service?.getCharacteristic(BleUuids.NAV_CHAR_UUID)
+            themeCharacteristic = service?.getCharacteristic(BleUuids.THEME_CHAR_UUID)
             state = if (navCharacteristic != null) BleState.CONNECTED else BleState.DISCONNECTED
 
             // Reliability fix: as soon as the link is actually ready to accept
@@ -354,6 +368,7 @@ object BleNavClient {
             if (state == BleState.CONNECTED) {
                 lastKnownNavText?.let { sendNavText(it) }
                 lastKnownNavBytes?.let { sendNavBytes(it) }
+                sendDisplayTheme(lastKnownLightMode)
                 startHeartbeat()
                 startKeepAlive()
             }
@@ -469,6 +484,7 @@ object BleNavClient {
         val gatt = bluetoothGatt
         bluetoothGatt = null
         navCharacteristic = null
+        themeCharacteristic = null
         state = BleState.DISCONNECTED
         gatt?.close()
         maybeScheduleReconnect()
@@ -532,6 +548,33 @@ object BleNavClient {
         }, WRITE_DEBOUNCE_MS)
     }
 
+    /**
+     * Pushes the display theme (dark/light) to the ESP32, and remembers it
+     * as lastKnownLightMode so it gets resent on the next (re)connect. No
+     * debouncing here (unlike sendNavText/sendNavBytes) since this is a
+     * one-off user toggle, not a stream of frequent updates.
+     */
+    @SuppressLint("MissingPermission")
+    fun sendDisplayTheme(light: Boolean) {
+        lastKnownLightMode = light
+        val gatt = bluetoothGatt ?: return
+        val char = themeCharacteristic ?: return
+        val bytes = byteArrayOf(if (light) 1 else 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(
+                char, bytes,
+                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            char.value = bytes
+            @Suppress("DEPRECATION")
+            char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            @Suppress("DEPRECATION")
+            gatt.writeCharacteristic(char)
+        }
+    }
+
     @SuppressLint("MissingPermission")
     /**
      * Clears the cached last-known nav payload so a future reconnect has
@@ -555,6 +598,7 @@ object BleNavClient {
         if (gatt == null) {
             // Nothing to tear down.
             navCharacteristic = null
+            themeCharacteristic = null
             state = BleState.DISCONNECTED
             return
         }

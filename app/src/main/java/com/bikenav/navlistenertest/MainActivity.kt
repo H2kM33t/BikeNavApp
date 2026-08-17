@@ -64,6 +64,7 @@ class MainActivity : AppCompatActivity() {
         // Apply persisted settings
         BleNavClient.autoReconnectEnabled = Prefs.autoReconnect(this)
         BleNavClient.setPairedAddress(Prefs.pairedDeviceAddress(this))
+        BleNavClient.lastKnownLightMode = Prefs.displayLightMode(this)
 
         if (savedInstanceState == null) {
             // First time logic
@@ -267,6 +268,16 @@ class MainActivity : AppCompatActivity() {
             Prefs.setShowLogs(this, isChecked)
             (supportFragmentManager.findFragmentById(R.id.fragment_container) as? DashboardFragment)
                 ?.refreshLogsVisibility()
+        }
+
+        val lightModeSwitch = view.findViewById<SwitchMaterial>(R.id.lightModeSwitch)
+        lightModeSwitch.isChecked = Prefs.displayLightMode(this)
+        lightModeSwitch.setOnCheckedChangeListener { _, isChecked ->
+            Prefs.setDisplayLightMode(this, isChecked)
+            // Pushes immediately if connected; if not, BleNavClient resends
+            // lastKnownLightMode as soon as the link comes back up, so the
+            // choice still "sticks" even if the toggle happens offline.
+            BleNavClient.sendDisplayTheme(isChecked)
         }
 
         MaterialAlertDialogBuilder(this)

@@ -9,6 +9,7 @@ object Prefs {
     private const val KEY_AUTO_RECONNECT = "auto_reconnect"
     private const val KEY_PAIRED_ADDRESS = "paired_device_address"
     private const val KEY_PAIRED_NAME = "paired_device_name"
+    private const val KEY_DISPLAY_LIGHT_MODE = "display_light_mode"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -46,5 +47,13 @@ object Prefs {
             .remove(KEY_PAIRED_ADDRESS)
             .remove(KEY_PAIRED_NAME)
             .apply()
+    }
+
+    /** Whether the ESP32 display should use its light theme. Defaults to dark (false). */
+    fun displayLightMode(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_DISPLAY_LIGHT_MODE, false)
+
+    fun setDisplayLightMode(context: Context, value: Boolean) {
+        prefs(context).edit().putBoolean(KEY_DISPLAY_LIGHT_MODE, value).apply()
     }
 }
